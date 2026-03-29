@@ -14,11 +14,11 @@ Implements LRU eviction and TTL expiry — designed as a Redis replacement for a
 kv-store/
 ├── CMakeLists.txt
 ├── include/
-│   └── lru_store.h        # LRUStore, Node, TTLNode declarations
+│   └── lru_store.h        # LRUStore, Node, TTLNode, LRUStoreConfig declarations
 └── src/
     ├── main.cpp
     ├── store/
-    │   └── lru_store.cpp  # LRU + TTL implementation
+    │   └── lru_store.cpp  # LRU + TTL + background eviction implementation
     ├── server/            # TCP socket server (in progress)
     └── protocol/          # Wire protocol parser (in progress)
 ```
@@ -40,9 +40,31 @@ kv-store/
 `std::priority_queue<TTLNode>` min-heap ordered by expiry time, with lazy deletion.
 
 - `Node::expTime` holds `optional<time_point>` — `nullopt` means the key never expires
-- Lazy expiry check on every GET before returning a value
+- Lazy expiry check on every GET/EXISTS before returning a value
 - On SET or EXPIRE, a new heap entry is pushed — stale entries are discarded during active eviction by comparing heap entry expiry against the node's current expiry
-- Active eviction via background thread on a fixed interval (in progress)
+
+### Background Eviction Thread
+
+Active eviction runs on a background thread started in the constructor and stopped cleanly in the destructor.
+
+- Instead of sleeping a fixed interval, the thread checks the TTL heap top and sleeps until the nearest key's expiry time. Falls back to `evictInterval` seconds when the heap is empty
+- When a new key comes in with an earlier expiry than the current heap top, `cv.notify_one()` wakes the thread early to recalculate its next wakeup time
+- Uses `cv.wait_until()` instead of `sleep_for` — so the destructor can wake it immediately on shutdown rather than waiting out the full sleep
+- Two mutexes protect shared state: `mapMtx` for the store + DLL, `heapMtx` for the TTL heap. A third `evictionMtx` is used only with the condition variable — so the sleeping thread never blocks GET/SET operations
+
+### Configuration
+
+Store is configured via `LRUStoreConfig` — a plain struct with sensible defaults:
+
+```cpp
+// production
+LRUStoreConfig config = { .maxCapacity = 1000, .ttl = 60, .evictInterval = 60 };
+
+// tests
+LRUStoreConfig config = { .maxCapacity = 5, .ttl = 2, .evictInterval = 5 };
+
+LRUStore store(config);
+```
 
 ---
 
@@ -71,6 +93,10 @@ kv-store/
 
 **Minimum TTL of 60 seconds** — enforced as `max(store_default_ttl, user_input)`. Sub-minute TTLs cause unnecessary churn in a cache use case.
 
+**Two separate mutexes for store and heap** — `mapMtx` and `heapMtx` are kept separate so heap iteration during eviction doesn't block concurrent GET/SET on the store. A third `evictionMtx` is used only with the condition variable to avoid blocking GET/SET while the eviction thread is sleeping.
+
+**`removeExpKeys()` releases `heapMtx` before touching the store** — holding both locks simultaneously would create a circular wait with SET/EXPIRE (which acquire `mapMtx` then `heapMtx`). Releasing `heapMtx` first eliminates the deadlock.
+
 ---
 
 ## Build
@@ -93,8 +119,8 @@ cmake --build .
 - [x] LRU eviction — HashMap + DLL
 - [x] TTL expiry — min-heap with lazy deletion
 - [x] EXPIRE command
-- [ ] Background eviction thread
-- [ ] Thread safety — mutex layer
+- [x] Background eviction thread — smart wakeup via condition variable
+- [x] Thread safety — two mutex design (mapMtx + heapMtx)
 - [ ] TCP socket server
 - [ ] RESP-inspired wire protocol
 - [ ] Integration with P2 — URL Shortener
