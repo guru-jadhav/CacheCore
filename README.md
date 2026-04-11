@@ -14,13 +14,17 @@ Implements LRU eviction and TTL expiry — designed as a Redis replacement for a
 kv-store/
 ├── CMakeLists.txt
 ├── include/
-│   └── lru_store.h        # LRUStore, Node, TTLNode, LRUStoreConfig declarations
+│   ├── lru_store.h        # LRUStore, Node, TTLNode, LRUStoreConfig declarations
+│   ├── tcp_server.h       # TCPServer — connection handling, thread pool
+│   └── resp_parser.h      # RESPParser, RESPCommand, ParseStatus
 └── src/
     ├── main.cpp
     ├── store/
     │   └── lru_store.cpp  # LRU + TTL + background eviction implementation
-    ├── server/            # TCP socket server (in progress)
-    └── protocol/          # Wire protocol parser (in progress)
+    ├── server/
+    │   └── tcp_server.cpp # TCP server implementation (in progress)
+    └── protocol/
+        └── resp_parser.cpp # RESP protocol parser implementation (in progress)
 ```
 
 ---
@@ -52,6 +56,27 @@ Active eviction runs on a background thread started in the constructor and stopp
 - Uses `cv.wait_until()` instead of `sleep_for` — so the destructor can wake it immediately on shutdown rather than waiting out the full sleep
 - Two mutexes protect shared state: `mapMtx` for the store + DLL, `heapMtx` for the TTL heap. A third `evictionMtx` is used only with the condition variable — so the sleeping thread never blocks GET/SET operations
 
+### TCP Server
+
+Handles client connections over TCP on a configurable port.
+
+- Binds to `0.0.0.0:port` — accepts connections from any network interface
+- Thread pool of 10 worker threads pre-created at startup — bounded resource usage, no per-connection thread spawn overhead
+- `accept()` loop runs on a dedicated thread — pushes client fds into a shared queue
+- Worker threads block on `cv.wait()` — zero CPU when idle, exactly one worker wakes per new client via `notify_one()`
+- Persistent connections — one worker thread serves one client for the lifetime of the connection
+- `activeClients` atomic counter — 11th client gets `-ERR max clients reached\r\n` and is rejected
+- `SO_REUSEADDR` set — server restarts immediately without waiting for OS `TIME_WAIT` to expire
+
+### RESP Protocol Parser
+
+Parses incoming RESP arrays into structured commands. Separate from the server layer — no socket knowledge.
+
+- Protocol format: `*N, dbIndex, command, args...`
+- `ParseStatus` enum — `OK`, `INCOMPLETE`, `INVALID_FORMAT`, `INVALID_DB_INDEX`, `UNKNOWN_COMMAND`
+- `INCOMPLETE` lets `handleClient()` accumulate bytes across multiple `recv()` calls — handles TCP chunking correctly
+- No pipelining — one command per parse call (sync clients send one command, wait for response)
+
 ### Configuration
 
 Store is configured via `LRUStoreConfig` — a plain struct with sensible defaults:
@@ -66,6 +91,33 @@ LRUStoreConfig config = { .maxCapacity = 5, .ttl = 2, .evictInterval = 5 };
 LRUStore store(config);
 ```
 
+Multiple store instances can be created from a single config file — clients specify which instance to query by including a `dbIndex` in every request.
+
+---
+
+## Wire Protocol
+
+Commands are sent as RESP arrays. Format: `*N\r\n` followed by N bulk strings `$len\r\ndata\r\n`.
+
+Argument order: `dbIndex, command, args...`
+
+```
+SET on db 0:
+*4\r\n$1\r\n0\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
+
+GET on db 1:
+*3\r\n$1\r\n1\r\n$3\r\nGET\r\n$3\r\nfoo\r\n
+```
+
+Responses:
+```
++OK\r\n          — success (SET, DEL, EXPIRE)
+$3\r\nfoo\r\n    — bulk string (GET value)
+$-1\r\n          — null (GET miss)
+:1\r\n           — integer (EXISTS)
+-ERR msg\r\n     — error
+```
+
 ---
 
 ## Commands
@@ -73,9 +125,9 @@ LRUStore store(config);
 | Command | Signature | Description |
 |---|---|---|
 | `SET` | `SET key value [isExpires=true]` | Store a key. Expires after default TTL unless `isExpires=false` |
-| `GET` | `GET key` | Returns value or `nullopt` if missing or expired |
+| `GET` | `GET key` | Returns value or null if missing or expired |
 | `DEL` | `DEL key` | Delete a key |
-| `EXISTS` | `EXISTS key` | Returns true if key exists and is not expired |
+| `EXISTS` | `EXISTS key` | Returns 1 if key exists and is not expired |
 | `EXPIRE` | `EXPIRE key seconds` | Set TTL for a key — effective value is `max(store_ttl, seconds)` |
 | `CLEAR` | `CLEAR` | Delete all keys |
 
@@ -96,6 +148,12 @@ LRUStore store(config);
 **Two separate mutexes for store and heap** — `mapMtx` and `heapMtx` are kept separate so heap iteration during eviction doesn't block concurrent GET/SET on the store. A third `evictionMtx` is used only with the condition variable to avoid blocking GET/SET while the eviction thread is sleeping.
 
 **`removeExpKeys()` releases `heapMtx` before touching the store** — holding both locks simultaneously would create a circular wait with SET/EXPIRE (which acquire `mapMtx` then `heapMtx`). Releasing `heapMtx` first eliminates the deadlock.
+
+**Thread pool over one-thread-per-client** — bounded resource usage. One thread per client would allow unbounded thread creation — 1000 clients = 1000 threads = potential OOM. Pool of 10 caps memory usage and matches expected number of persistent app server connections.
+
+**Persistent connections** — app servers connect once and reuse the connection for all requests. Avoids TCP 3-way handshake overhead on every command.
+
+**RESP parser separate from TCPServer** — parser has no socket knowledge, server has no protocol knowledge. Each component has one job and can be tested independently.
 
 ---
 
@@ -121,6 +179,9 @@ cmake --build .
 - [x] EXPIRE command
 - [x] Background eviction thread — smart wakeup via condition variable
 - [x] Thread safety — two mutex design (mapMtx + heapMtx)
-- [ ] TCP socket server
-- [ ] RESP-inspired wire protocol
+- [x] TCPServer skeleton — thread pool, accept loop, worker loop
+- [x] RESPParser skeleton — parse() with INCOMPLETE/error detection
+- [ ] serialize() — RESP response formatting
+- [ ] handleCommand() — route parsed command to correct store instance
+- [ ] stop() — clean shutdown
 - [ ] Integration with P2 — URL Shortener
