@@ -163,7 +163,8 @@ class LRUStore {
         
         std::optional<std::string> GET(const std::string& _key);
 
-        bool SET(const std::string& _key, const std::string& _value, const bool isExpires = true);
+        // will send this default flag from cliet
+        bool SET(const std::string& _key, const std::string& _value, const bool isExpires);
 
         // we can make the DEL as void -> if exists we delete it we just return
         void DEL(const std::string& _key);
