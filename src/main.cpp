@@ -1,4 +1,3 @@
-#pragma once
 #include "lru_store.h"
 #include <atomic>
 #include <csignal>
