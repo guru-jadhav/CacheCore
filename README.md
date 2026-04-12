@@ -15,10 +15,10 @@ kv-store/
 ├── CMakeLists.txt
 ├── include/
 │   ├── lru_store.h        # LRUStore, Node, TTLNode, LRUStoreConfig declarations
-│   ├── tcp_server.h       # TCPServer — connection handling, thread pool
-│   └── resp_parser.h      # RESPParser, RESPCommand, ParseStatus
+│   ├── tcp_server.h       # TCPServer — connection handling, thread pool, command routing
+│   └── resp_parser.h      # RESPParser, RESPCommand, ParseStatus, ResponseType
 └── src/
-    ├── main.cpp
+    ├── main.cpp            # Entry point — config parsing, server startup, signal handling
     ├── store/
     │   └── lru_store.cpp  # LRU + TTL + background eviction implementation
     ├── server/
@@ -67,31 +67,39 @@ Handles client connections over TCP on a configurable port.
 - Persistent connections — one worker thread serves one client for the lifetime of the connection
 - `activeClients` atomic counter — 11th client gets `-ERR max clients reached\r\n` and is rejected
 - `SO_REUSEADDR` set — server restarts immediately without waiting for OS `TIME_WAIT` to expire
+- O(1) command routing via `commandRegistry` — `unordered_map<string, {expectedArgs, lambda}>`, no if-chain
 
 ### RESP Protocol Parser
 
 Parses incoming RESP arrays into structured commands. Separate from the server layer — no socket knowledge.
 
 - Protocol format: `*N, dbIndex, command, args...`
+- `ParseErr` namespace — all parse error strings as constants, every error path populates `errorMsg`
 - `ParseStatus` enum — `OK`, `INCOMPLETE`, `INVALID_FORMAT`, `INVALID_DB_INDEX`, `UNKNOWN_COMMAND`
 - `INCOMPLETE` lets `handleClient()` accumulate bytes across multiple `recv()` calls — handles TCP chunking correctly
+- `ResponseType` enum + `serialize()` — formats all RESP response types
 - No pipelining — one command per parse call (sync clients send one command, wait for response)
 
 ### Configuration
 
-Store is configured via `LRUStoreConfig` — a plain struct with sensible defaults:
+Server is started with a config file path:
 
-```cpp
-// production
-LRUStoreConfig config = { .maxCapacity = 1000, .ttl = 60, .evictInterval = 60 };
-
-// tests
-LRUStoreConfig config = { .maxCapacity = 5, .ttl = 2, .evictInterval = 5 };
-
-LRUStore store(config);
+```bash
+./kv-store config.json
 ```
 
-Multiple store instances can be created from a single config file — clients specify which instance to query by including a `dbIndex` in every request.
+Config file format (JSON, parser in progress):
+```json
+{
+    "port": 6379,
+    "databases": [
+        { "maxCapacity": 1000, "ttl": 60, "evictInterval": 60 },
+        { "maxCapacity": 500,  "ttl": 120, "evictInterval": 60 }
+    ]
+}
+```
+
+Multiple store instances — clients specify which to query via `dbIndex` in every request.
 
 ---
 
@@ -124,12 +132,12 @@ $-1\r\n          — null (GET miss)
 
 | Command | Signature | Description |
 |---|---|---|
-| `SET` | `SET key value [isExpires=true]` | Store a key. Expires after default TTL unless `isExpires=false` |
+| `SET` | `SET key value isExpires(0/1)` | Store a key. Pass `0` for no expiry |
 | `GET` | `GET key` | Returns value or null if missing or expired |
 | `DEL` | `DEL key` | Delete a key |
 | `EXISTS` | `EXISTS key` | Returns 1 if key exists and is not expired |
 | `EXPIRE` | `EXPIRE key seconds` | Set TTL for a key — effective value is `max(store_ttl, seconds)` |
-| `CLEAR` | `CLEAR` | Delete all keys |
+| `CLEAR` | `CLEAR` | Delete all keys in the selected database |
 
 ---
 
@@ -155,6 +163,10 @@ $-1\r\n          — null (GET miss)
 
 **RESP parser separate from TCPServer** — parser has no socket knowledge, server has no protocol knowledge. Each component has one job and can be tested independently.
 
+**O(1) command routing via `commandRegistry`** — `unordered_map<string, {expectedArgs, lambda}>` instead of an if-chain. Adding a new command means adding one entry to the map — no touching existing logic.
+
+**Config file over hardcoded values** — server started as `./kv-store config.json`. Production and test environments use different config files — no code changes needed.
+
 ---
 
 ## Build
@@ -165,7 +177,7 @@ cd kv-store
 mkdir build && cd build
 cmake ..
 cmake --build .
-./kv-store
+./kv-store ../config.json
 ```
 
 **Requirements:** GCC 13+ or Clang 18+, CMake 3.20+, Linux (POSIX)
@@ -179,9 +191,10 @@ cmake --build .
 - [x] EXPIRE command
 - [x] Background eviction thread — smart wakeup via condition variable
 - [x] Thread safety — two mutex design (mapMtx + heapMtx)
-- [x] TCPServer skeleton — thread pool, accept loop, worker loop
-- [x] RESPParser skeleton — parse() with INCOMPLETE/error detection
-- [ ] serialize() — RESP response formatting
-- [ ] handleCommand() — route parsed command to correct store instance
-- [ ] stop() — clean shutdown
+- [x] TCPServer — thread pool, accept loop, worker loop, O(1) command routing
+- [x] RESPParser — parse() + serialize() with full error messages
+- [x] Config file driven startup — CLI arg, config struct
+- [ ] JSON config parser — create stores from config file
+- [ ] Move implementations to .cpp files
+- [ ] End-to-end test with Python RESP client
 - [ ] Integration with P2 — URL Shortener
