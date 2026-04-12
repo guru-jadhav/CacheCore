@@ -3,6 +3,17 @@
 #include <string>
 #include <vector>
 
+namespace ParseErr {
+    const std::string EMPTY_REQUEST         = "empty request";
+    const std::string EXPECTED_ARRAY        = "expected '*' at start of RESP array";
+    const std::string INVALID_ARRAY_COUNT   = "non-numeric character in array count after '*'";
+    const std::string MISSING_CRLF          = "expected \\r\\n terminator not found";
+    const std::string EXPECTED_BULK         = "expected '$' at start of bulk string";
+    const std::string INVALID_BULK_LEN      = "non-numeric character in bulk string length after '$'";
+    const std::string BULK_DATA_SHORT       = "bulk string data shorter than declared length";
+    const std::string INVALID_DB_INDEX      = "db index must be a non-negative integer";
+}
+
 enum class ParseStatus {
     OK,
     INVALID_FORMAT,
@@ -11,6 +22,15 @@ enum class ParseStatus {
     INCOMPLETE
 };
 
+enum class ResponseType {
+    OK,
+    ERROR,
+    BULK,
+    INTEGER,
+    NULLBULK
+};
+
+const std::string terminal = "\r\n";
 
 struct RESPCommand {
     int dbIndex;
@@ -39,6 +59,7 @@ class RESPParser{
 
         if(rawRequest[startIndex] != '$'){
             parsedRequest.status = ParseStatus::INVALID_FORMAT;
+            parsedRequest.errorMsg = ParseErr::EXPECTED_BULK;
             return false;
         }
 
@@ -51,6 +72,7 @@ class RESPParser{
                 index++;
             }else{
                 parsedRequest.status = ParseStatus::INVALID_FORMAT;
+                parsedRequest.errorMsg = ParseErr::INVALID_BULK_LEN;
                 return false;
             }
         }
@@ -62,6 +84,7 @@ class RESPParser{
 
         if(rawRequest[index + 1] != '\n'){
             parsedRequest.status = ParseStatus::INVALID_FORMAT;
+            parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
             return false;
         }
         
@@ -72,6 +95,7 @@ class RESPParser{
         std::string data = rawRequest.substr(index, dataLen);
         if(data.size() < dataLen){
             parsedRequest.status = ParseStatus::INCOMPLETE;
+            parsedRequest.errorMsg = ParseErr::BULK_DATA_SHORT;
             return false;
         }
         
@@ -83,15 +107,16 @@ class RESPParser{
             return false;
         }
 
-        index++;
         if(rawRequest[index] != '\r'){
             parsedRequest.status = ParseStatus::INVALID_FORMAT;
+            parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
             return false;
         }
 
         index++;
         if(rawRequest[index] != '\n'){
             parsedRequest.status = ParseStatus::INVALID_FORMAT;
+            parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
             return false;
         }
         
@@ -111,6 +136,37 @@ class RESPParser{
         return true;
     }
 
+    std::string simpleStringResponse(){
+        return "+OK" + terminal;
+    }
+
+    std::string errorResponse(const std::string& rawResponse){
+        std::string formattedResponse = "-ERR ";
+        formattedResponse += rawResponse;
+        formattedResponse += terminal;
+        return formattedResponse;
+    }
+
+    std::string bulkResponse(const std::string& rawResponse) {
+        std::string formattedResponse ="$";
+        std::string noOfBytes = std::to_string(rawResponse.size());
+        formattedResponse += noOfBytes;
+        formattedResponse += terminal;
+        formattedResponse += rawResponse;
+        formattedResponse += terminal;
+        return formattedResponse;
+    }
+
+    std::string nullBulkResponse(){
+        return "$-1" + terminal;
+    }
+
+    std::string integerResponse(const std::string& rawResponse) {
+        std::string formattedResponse =":";
+        formattedResponse += rawResponse;
+        formattedResponse += terminal;
+        return formattedResponse;
+    }
 
     public:
 
@@ -120,11 +176,13 @@ class RESPParser{
             
             if(rawRequest.size() <= 0){
                 parsedRequest.status = ParseStatus::INCOMPLETE;
+                parsedRequest.errorMsg = ParseErr::EMPTY_REQUEST;
                 return parsedRequest;
             }
             
             if(rawRequest[0] != '*'){
                 parsedRequest.status = ParseStatus::INVALID_FORMAT;
+                parsedRequest.errorMsg = ParseErr::EXPECTED_ARRAY;
                 return parsedRequest;
             }
 
@@ -138,6 +196,7 @@ class RESPParser{
                     pos++;
                 }else{
                     parsedRequest.status = ParseStatus::INVALID_FORMAT;
+                    parsedRequest.errorMsg = ParseErr::INVALID_ARRAY_COUNT;
                     return parsedRequest;
                 }
             }
@@ -150,6 +209,7 @@ class RESPParser{
             
             if(rawRequest[pos + 1] != '\n'){
                 parsedRequest.status = ParseStatus::INVALID_FORMAT;
+                parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
                 return parsedRequest;
             }
             
@@ -165,12 +225,32 @@ class RESPParser{
             return parsedRequest;
         };
 
-        std::string serialize (std::string& rawResponse) {
-            std::string formattedRequest;
+        std::string serialize (ResponseType type, const std::string& rawResponse) {
             
-            // format the request according to the RESP protocol;
+            switch (type) {
 
-            return formattedRequest;
+                case ResponseType::OK : {
+                    return simpleStringResponse();
+                }
+
+                case ResponseType::ERROR : {
+                    return errorResponse(rawResponse);
+                }
+
+                case ResponseType::BULK : {
+                    return bulkResponse(rawResponse);
+                }
+
+                case ResponseType::NULLBULK : {
+                    return nullBulkResponse();
+                }
+
+                case ResponseType::INTEGER : {
+                    return integerResponse(rawResponse);
+                };
+            }
+
+            return "unknown response type";
         }
 };
 
@@ -196,5 +276,12 @@ Client usually sends array of bulk streams:
     1 single request will be something like : 
 
     no. of bulk string, db index, command, key, value, flags, etc.
+
+    ResponseType = 
+        +OK\r\n          — simple string (SET, DEL, EXPIRE success)
+        -ERR msg\r\n     — error
+        $3\r\nfoo\r\n    — bulk string (GET value)
+        $-1\r\n          — null bulk string (GET miss)
+        :1\r\n           — integer (EXISTS)
 
 */
