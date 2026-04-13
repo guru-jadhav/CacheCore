@@ -11,7 +11,7 @@ namespace ParseErr {
     const std::string EXPECTED_BULK         = "expected '$' at start of bulk string";
     const std::string INVALID_BULK_LEN      = "non-numeric character in bulk string length after '$'";
     const std::string BULK_DATA_SHORT       = "bulk string data shorter than declared length";
-    const std::string INVALID_DB_INDEX      = "db index must be a non-negative integer";
+    const std::string INVALID_DB_INDEX      = "db index must be a valid number";
 }
 
 enum class ParseStatus {
@@ -125,7 +125,19 @@ class RESPParser{
         startIndex = index;
 
         if(requestNo == 0){
-            parsedRequest.dbIndex = std::stoi((data));
+            try {
+                
+                /*
+                    what if the DB index bulk string is not a number like 
+                    -> "abc" 
+                    -> "" or an empty string
+                */
+                parsedRequest.dbIndex = std::stoi((data));
+            } catch (...) {
+                parsedRequest.status =  ParseStatus::INVALID_FORMAT;
+                parsedRequest.errorMsg = ParseErr::INVALID_DB_INDEX;
+                return false;
+            }
         }else if(requestNo == 1){
             parsedRequest.command = data;
         }else{
