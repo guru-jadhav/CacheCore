@@ -2,11 +2,47 @@
 // #include "../../include/lru_store.h"
 #include "lru_store.h"      // quotes — for your own project headers
 #include <chrono>
+#include <climits>
 #include <cstddef>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+
+bool LRUStore::isAllDigits(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+
+    int startIndex = 0;
+    
+    if (value[0] == '-') {
+        if (value.size() == 1) {
+            return false;
+        }
+        startIndex = 1;
+    }
+
+    for (int i = startIndex; i < value.size(); i++) {
+        if (value[i] < '0' || value[i] > '9') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+void LRUStore::addNewNodeToStore(const std::string& _key, const std::string& _value, const bool isExpires){
+    if(store.size() >= maxCapacity){
+        Node* toDelete = dummyTail->prev;
+        deleteNode(toDelete);
+    }
+    
+    Node* newNode = new Node(_key, _value);
+    store[_key] = newNode;
+    linkToHead(newNode);
+    addExpTime(newNode, isExpires);
+}
 
 void LRUStore::removeNode(Node* curr){
     Node* prevNode = curr->prev;
@@ -58,7 +94,7 @@ void LRUStore::clearStore(){
     }
 };
 
-bool LRUStore::isExpired(Node* curr){
+bool LRUStore::isExpired(const Node* curr){
     if(curr->expTime == std::nullopt){
         return false;
     }
@@ -179,16 +215,7 @@ bool LRUStore::SET(const std::string& _key, const std::string& _value, const boo
         addExpTime(curr, isExpires);
         return true;
     }
-
-    if(store.size() >= maxCapacity){
-        Node* toDelete = dummyTail->prev;
-        deleteNode(toDelete);
-    }
-    
-    Node* newNode = new Node(_key, _value);
-    store[_key] = newNode;
-    linkToHead(newNode);
-    addExpTime(newNode, isExpires);
+    addNewNodeToStore(_key, _value, isExpires);
     return true;
 };
 
@@ -232,4 +259,50 @@ void LRUStore::EXPIRE(const std::string& _key, const size_t duration){
     }
     Node* curr = isPresent->second;
     addExpTime(curr, true, duration);
+};
+
+
+std::optional<std::string> LRUStore::INCR(const std::string& _key){
+    std::lock_guard<std::mutex> strLock(mapMtx);
+    const auto& isPresent = store.find(_key);
+
+    if(isPresent == store.end() || isExpired(isPresent->second)){
+
+        // this means we have the key but it was expired
+        if(isPresent != store.end()){
+            deleteNode(isPresent->second);
+        }
+        addNewNodeToStore(_key, "1", false);
+        return "1";
+    }
+
+    std::string& oldValueStr = isPresent->second->value;
+
+    if(!isAllDigits(oldValueStr)){
+        return std::nullopt;
+    }
+
+    long long newValue = 0;
+
+    try {
+        newValue = std::stoll(oldValueStr);
+    } catch (...) {
+        // if we have LLONG_MAX + 1 value then it throws std::out_of_range
+        // even though we never increment beyound LLONG_MAX, but what if user
+        // sets very long out-of-bound value and tried to incremt it, then boom
+        return std::nullopt;
+    }
+    
+    // but what if we do ++ and this moves out newValue out-of-bond ?
+    // we need a check here -> overflow check before increment
+    if(newValue == LLONG_MAX){
+        return std::nullopt;
+    }
+
+    newValue++;
+    std::string strCounter = std::to_string(newValue);
+    oldValueStr = strCounter;
+    moveToHead(isPresent->second);
+
+    return strCounter;
 };

@@ -62,10 +62,12 @@ class LRUStore {
     void linkToHead(Node* curr);
     void deleteNode(Node* toDelete);
     void clearStore();
-    bool isExpired(Node* curr);
+    bool isExpired(const Node* curr);
     void addExpTime(Node* curr, const bool isExpires, const size_t duration = 0);
     void addToTTLHeap(const std::string& key, std::chrono::steady_clock::time_point _expTime);
     void removeExpKeys();
+    bool isAllDigits(const std::string& value);
+    void addNewNodeToStore(const std::string& _key, const std::string& _val, const bool isExpire);
 
     std::unordered_map<std::string, Node*> store;
     Node* dummyHead;
@@ -174,4 +176,6 @@ class LRUStore {
         void CLEAR();
 
         void EXPIRE(const std::string& _key, const size_t duration);
+
+        std::optional<std::string> INCR(const std::string& _key);
 };

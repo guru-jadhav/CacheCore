@@ -88,6 +88,15 @@ class TCPServer {
                 return parser.serialize(ResponseType::ERROR, "invalid TTL value");
             }
         }};
+
+        commandRegistry["INCR"] = {1, [this](const RESPCommand& cmd) {
+
+            auto result = stores[cmd.dbIndex].INCR(cmd.args[0]);
+            if(!result){
+                return parser.serialize(ResponseType::ERROR, "value is not an integer or out of range");
+            }
+            return parser.serialize(ResponseType::INTEGER, *result);
+        }};
         
     }
 

@@ -44,7 +44,7 @@ kv-store/
 `std::priority_queue<TTLNode>` min-heap ordered by expiry time, with lazy deletion.
 
 - `Node::expTime` holds `optional<time_point>` — `nullopt` means the key never expires
-- Lazy expiry check on every GET/EXISTS before returning a value
+- Lazy expiry check on every GET/EXISTS/INCR before returning a value
 - On SET or EXPIRE, a new heap entry is pushed — stale entries are discarded during active eviction by comparing heap entry expiry against the node's current expiry
 
 ### Background Eviction Thread
@@ -122,7 +122,7 @@ Responses:
 +OK\r\n          — success (SET, DEL, EXPIRE)
 $3\r\nfoo\r\n    — bulk string (GET value)
 $-1\r\n          — null (GET miss)
-:1\r\n           — integer (EXISTS)
+:1\r\n           — integer (EXISTS, INCR)
 -ERR msg\r\n     — error
 ```
 
@@ -137,6 +137,7 @@ $-1\r\n          — null (GET miss)
 | `DEL` | `DEL key` | Delete a key |
 | `EXISTS` | `EXISTS key` | Returns 1 if key exists and is not expired |
 | `EXPIRE` | `EXPIRE key seconds` | Set TTL for a key — effective value is `max(store_ttl, seconds)` |
+| `INCR` | `INCR key` | Increments integer value by 1. If key is missing or expired, initializes to 1 with no TTL. Returns `-ERR` if value is not an integer or out of range. |
 | `CLEAR` | `CLEAR` | Delete all keys in the selected database |
 
 ---
@@ -167,6 +168,8 @@ $-1\r\n          — null (GET miss)
 
 **Config file over hardcoded values** — server started as `./kv-store config.json`. Production and test environments use different config files — no code changes needed.
 
+**Protocol-compliant Expiry** — When a key expires, its existence and TTL metadata are completely wiped. Calling a mutating operation (like `INCR`) on a recently expired key initializes a brand new node with no TTL, strictly enforcing the rule that the server does not guess client intentions for stale data.
+
 ---
 
 ## Build
@@ -194,6 +197,7 @@ cmake --build .
 - [x] TCPServer — thread pool, accept loop, worker loop, O(1) command routing
 - [x] RESPParser — parse() + serialize() with full error messages
 - [x] Config file driven startup — CLI arg, config struct
+- [x] INCR command
 - [ ] JSON config parser — create stores from config file
 - [ ] Move implementations to .cpp files
 - [ ] End-to-end test with Python RESP client
