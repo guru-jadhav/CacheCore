@@ -13,6 +13,7 @@ Implements LRU eviction and TTL expiry — designed as a Redis replacement for a
 ```
 kv-store/
 ├── CMakeLists.txt
+├── store.conf              # Server configuration file
 ├── include/
 │   ├── lru_store.h        # LRUStore, Node, TTLNode, LRUStoreConfig declarations
 │   ├── tcp_server.h       # TCPServer — connection handling, thread pool, command routing
@@ -85,21 +86,24 @@ Parses incoming RESP arrays into structured commands. Separate from the server l
 Server is started with a config file path:
 
 ```bash
-./kv-store config.json
+./kv-store store.conf
 ```
 
-Config file format (JSON, parser in progress):
-```json
-{
-    "port": 6379,
-    "databases": [
-        { "maxCapacity": 1000, "ttl": 60, "evictInterval": 60 },
-        { "maxCapacity": 500,  "ttl": 120, "evictInterval": 60 }
-    ]
-}
+Config file format (`.conf`):
+```properties
+# kv-store config
+PORT=6948
+
+# format: DB <maxCapacity> <ttl> <evictInterval>
+DB maxCapacity=1000 ttl=60 evictInterval=60
+DB maxCapacity=500 ttl=120 evictInterval=80
+DB maxCapacity=200 ttl=60 evictInterval=80
 ```
 
-Multiple store instances — clients specify which to query via `dbIndex` in every request.
+- Lines starting with `#` are comments
+- `PORT` must be between 1 and 65535
+- Each `DB` line creates one store instance — clients query by `dbIndex` (0-based)
+- Server errors out if `PORT` is missing or no `DB` lines are found
 
 ---
 
@@ -119,7 +123,7 @@ GET on db 1:
 
 Responses:
 ```
-+OK\r\n          — success (SET, DEL, EXPIRE)
++OK\r\n          — success (SET, DEL, EXPIRE, CLEAR)
 $3\r\nfoo\r\n    — bulk string (GET value)
 $-1\r\n          — null (GET miss)
 :1\r\n           — integer (EXISTS, INCR)
@@ -137,7 +141,7 @@ $-1\r\n          — null (GET miss)
 | `DEL` | `DEL key` | Delete a key |
 | `EXISTS` | `EXISTS key` | Returns 1 if key exists and is not expired |
 | `EXPIRE` | `EXPIRE key seconds` | Set TTL for a key — effective value is `max(store_ttl, seconds)` |
-| `INCR` | `INCR key` | Increments integer value by 1. If key is missing or expired, initializes to 1 with no TTL. Returns `-ERR` if value is not an integer or out of range. |
+| `INCR` | `INCR key` | Increments integer value by 1. If key is missing or expired, initializes to `"1"` with no TTL. Returns `-ERR` if value is not a non-negative integer or is at `LLONG_MAX` |
 | `CLEAR` | `CLEAR` | Delete all keys in the selected database |
 
 ---
@@ -166,9 +170,9 @@ $-1\r\n          — null (GET miss)
 
 **O(1) command routing via `commandRegistry`** — `unordered_map<string, {expectedArgs, lambda}>` instead of an if-chain. Adding a new command means adding one entry to the map — no touching existing logic.
 
-**Config file over hardcoded values** — server started as `./kv-store config.json`. Production and test environments use different config files — no code changes needed.
+**Config file over hardcoded values** — server started as `./kv-store store.conf`. Production and test environments use different config files — no code changes needed. Server errors out immediately on missing or malformed config rather than starting with silent defaults.
 
-**Protocol-compliant Expiry** — When a key expires, its existence and TTL metadata are completely wiped. Calling a mutating operation (like `INCR`) on a recently expired key initializes a brand new node with no TTL, strictly enforcing the rule that the server does not guess client intentions for stale data.
+**`INCR` initializes missing/expired keys to `"1"`** — consistent with Redis semantics. If a key is missing or expired, `INCR` treats it as `0` and increments to `1` with no TTL. This is safe because the caller explicitly requested an increment — the server is not guessing intent. Overflow is guarded at `LLONG_MAX` — returns `-ERR` rather than wrapping.
 
 ---
 
@@ -180,7 +184,7 @@ cd kv-store
 mkdir build && cd build
 cmake ..
 cmake --build .
-./kv-store ../config.json
+./kv-store ../store.conf
 ```
 
 **Requirements:** GCC 13+ or Clang 18+, CMake 3.20+, Linux (POSIX)
@@ -192,13 +196,12 @@ cmake --build .
 - [x] LRU eviction — HashMap + DLL
 - [x] TTL expiry — min-heap with lazy deletion
 - [x] EXPIRE command
+- [x] INCR command — with missing/expired key initialization
 - [x] Background eviction thread — smart wakeup via condition variable
 - [x] Thread safety — two mutex design (mapMtx + heapMtx)
 - [x] TCPServer — thread pool, accept loop, worker loop, O(1) command routing
 - [x] RESPParser — parse() + serialize() with full error messages
-- [x] Config file driven startup — CLI arg, config struct
-- [x] INCR command
-- [ ] JSON config parser — create stores from config file
+- [x] Config file driven startup — `.conf` format, full validation
 - [ ] Move implementations to .cpp files
 - [ ] End-to-end test with Python RESP client
 - [ ] Integration with P2 — URL Shortener
