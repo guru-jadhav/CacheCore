@@ -48,6 +48,8 @@ struct LRUStoreConfig {
     size_t ttl           = 60;
     size_t evictInterval = 60;
 
+    LRUStoreConfig(){};
+
     LRUStoreConfig(size_t _maxCapacity, size_t _ttl, size_t _evictInterval)
         : maxCapacity(_maxCapacity)
         , ttl(_ttl)

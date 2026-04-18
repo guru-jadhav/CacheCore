@@ -20,3 +20,4 @@ kv-store
 *.swo
 .DS_Store
 .cache/
+store.conf
