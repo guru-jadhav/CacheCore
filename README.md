@@ -13,7 +13,7 @@ Implements LRU eviction and TTL expiry — designed as a Redis replacement for a
 ```
 kv-store/
 ├── CMakeLists.txt
-├── store.conf              # Server configuration file
+├── store.example.conf      # Example config — copy to store.conf and edit before running
 ├── include/
 │   ├── lru_store.h        # LRUStore, Node, TTLNode, LRUStoreConfig declarations
 │   ├── tcp_server.h       # TCPServer — connection handling, thread pool, command routing
@@ -86,7 +86,9 @@ Parses incoming RESP arrays into structured commands. Separate from the server l
 Server is started with a config file path:
 
 ```bash
-./kv-store store.conf
+# copy the example config and edit as needed
+cp store.example.conf store.conf
+./kv-store /path/to/store.conf
 ```
 
 Config file format (`.conf`):
@@ -170,7 +172,7 @@ $-1\r\n          — null (GET miss)
 
 **O(1) command routing via `commandRegistry`** — `unordered_map<string, {expectedArgs, lambda}>` instead of an if-chain. Adding a new command means adding one entry to the map — no touching existing logic.
 
-**Config file over hardcoded values** — server started as `./kv-store store.conf`. Production and test environments use different config files — no code changes needed. Server errors out immediately on missing or malformed config rather than starting with silent defaults.
+**Config file over hardcoded values** — server started as `./kv-store /path/to/store.conf`. Production and test environments use different config files — no code changes needed. Server errors out immediately on missing or malformed config rather than starting with silent defaults. `store.example.conf` is committed to the repo as a template — `store.conf` is gitignored and created by the user at runtime.
 
 **`INCR` initializes missing/expired keys to `"1"`** — consistent with Redis semantics. If a key is missing or expired, `INCR` treats it as `0` and increments to `1` with no TTL. This is safe because the caller explicitly requested an increment — the server is not guessing intent. Overflow is guarded at `LLONG_MAX` — returns `-ERR` rather than wrapping.
 
@@ -184,6 +186,8 @@ cd kv-store
 mkdir build && cd build
 cmake ..
 cmake --build .
+cp ../store.example.conf ../store.conf
+# edit store.conf as needed
 ./kv-store ../store.conf
 ```
 
