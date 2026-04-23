@@ -9,6 +9,35 @@
 #include <string>
 #include <vector>
 
+void LRUStore::evictionLoop(){
+    while(true){
+        std::unique_lock<std::mutex> lock(evictionMtx);
+        std::unique_lock<std::mutex> heapLock(heapMtx);
+        
+        /*
+            Smart wakeup: instead of sleeping a fixed evictInterval, sleep until the
+            nearest key's expiry time. If heap is empty, fall back to evictInterval.
+            When a new key with earlier expiry is added (via scheduleTTL),
+            evictionCv.notify_one() wakes this thread early to recalculate wakeup time.
+        */
+        std::chrono::time_point<std::chrono::steady_clock> nextEvictionTime = 
+            !ttlHeap.empty() 
+            ? ttlHeap.top().expTime 
+            : std::chrono::steady_clock::now() + std::chrono::seconds(evictInterval);
+        
+        // release heapMtx before sleeping — evictionCv needs only evictionMtx
+        heapLock.unlock(); 
+
+        evictionCv.wait_until(lock, nextEvictionTime, [this]{
+            return stopEviction.load();
+        });
+        if (stopEviction) {
+            break;
+        }
+        purgeExpiredKeys();
+    }
+};
+
 bool LRUStore::isAllDigits(const std::string& value) {
     if (value.empty()) {
         return false;
@@ -32,7 +61,7 @@ bool LRUStore::isAllDigits(const std::string& value) {
     return true;
 }
 
-void LRUStore::addNewNodeToStore(const std::string& _key, const std::string& _value, const bool isExpires){
+void LRUStore::insertNode(const std::string& _key, const std::string& _value, const bool isExpires){
     if(store.size() >= maxCapacity){
         Node* toDelete = dummyTail->prev;
         deleteNode(toDelete);
@@ -41,7 +70,7 @@ void LRUStore::addNewNodeToStore(const std::string& _key, const std::string& _va
     Node* newNode = new Node(_key, _value);
     store[_key] = newNode;
     linkToHead(newNode);
-    addExpTime(newNode, isExpires);
+    setExpiry(newNode, isExpires);
 }
 
 void LRUStore::removeNode(Node* curr){
@@ -102,10 +131,10 @@ bool LRUStore::isExpired(const Node* curr){
     
 };
 
-void LRUStore::addToTTLHeap(const std::string& _key, std::chrono::steady_clock::time_point _expTime){
+void LRUStore::scheduleTTL(const std::string& _key, std::chrono::steady_clock::time_point _expTime){
     std::unique_lock<std::mutex> lock(heapMtx);
 
-    TTLNode newNode = TTLNode(
+    TTLEntry newNode = TTLEntry(
         _key, 
         _expTime
     );
@@ -125,15 +154,15 @@ void LRUStore::addToTTLHeap(const std::string& _key, std::chrono::steady_clock::
 
     */
     if(needtoNotify){
-        cv.notify_one();
+        evictionCv.notify_one();
     }
 };
 
-void LRUStore::addExpTime(Node* curr, const bool isExpires, const size_t duration){
+void LRUStore::setExpiry(Node* curr, const bool isExpires, const size_t duration){
     if(isExpires){
         auto computedExpTime = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(ttl, duration));
         curr->expTime = computedExpTime;
-        addToTTLHeap(curr->key, computedExpTime);
+        scheduleTTL(curr->key, computedExpTime);
     }else{
         /*
             if we had an existing key and with an exp time and now the
@@ -147,12 +176,12 @@ void LRUStore::addExpTime(Node* curr, const bool isExpires, const size_t duratio
 };
 
 
-void LRUStore::removeExpKeys(){
+void LRUStore::purgeExpiredKeys(){
     std::unique_lock<std::mutex> lock(heapMtx);
     std::vector<std::string> toDeleteKeys;
 
     while(!ttlHeap.empty() && ttlHeap.top().expTime <= std::chrono::steady_clock::now()){
-        TTLNode curr = ttlHeap.top();
+        TTLEntry curr = ttlHeap.top();
         /*
             collect all the expired keys this way we keep our store mutex free 
             and GET|SET can use that mutex in the main thread
@@ -170,7 +199,7 @@ void LRUStore::removeExpKeys(){
         */
 
         // DEL(key);
-        std::lock_guard<std::mutex> storeLock(mapMtx);
+        std::lock_guard<std::mutex> storeLock(storeMtx);
         const auto& isPresent  = store.find(key);
         if(isPresent != store.end() && isPresent->second->expTime != std::nullopt && isPresent->second->expTime <= std::chrono::steady_clock::now()){
             deleteNode(isPresent->second);
@@ -179,7 +208,7 @@ void LRUStore::removeExpKeys(){
 };
 
 std::optional<std::string> LRUStore::GET(const std::string& _key){
-    std::lock_guard<std::mutex> lock(mapMtx);
+    std::lock_guard<std::mutex> lock(storeMtx);
     const auto& isPresent = store.find(_key);
     if(isPresent == store.end()){
         return std::nullopt;
@@ -206,21 +235,21 @@ bool LRUStore::SET(const std::string& _key, const std::string& _value, const boo
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mapMtx);
+    std::lock_guard<std::mutex> lock(storeMtx);
     const auto& isPresent = store.find(_key);
     if(isPresent != store.end()){
         Node* curr = isPresent->second;
         curr->value = _value;
         moveToHead(isPresent->second);
-        addExpTime(curr, isExpires);
+        setExpiry(curr, isExpires);
         return true;
     }
-    addNewNodeToStore(_key, _value, isExpires);
+    insertNode(_key, _value, isExpires);
     return true;
 };
 
 void LRUStore::DEL(const std::string& _key){
-    std::lock_guard<std::mutex> lock(mapMtx);
+    std::lock_guard<std::mutex> lock(storeMtx);
     const auto& isPresent = store.find(_key);
     if(isPresent == store.end()){
         return;
@@ -231,7 +260,7 @@ void LRUStore::DEL(const std::string& _key){
 };
 
 bool LRUStore::EXISTS(const std::string& _key){
-    std::lock_guard<std::mutex>lock(mapMtx);
+    std::lock_guard<std::mutex>lock(storeMtx);
     const auto& isPresent = store.find(_key);
     if(isPresent == store.end()){
         return false;
@@ -245,25 +274,25 @@ bool LRUStore::EXISTS(const std::string& _key){
 
 void LRUStore::CLEAR(){
     // delete all the nodes and then clear the map
-    std::lock_guard<std::mutex> strLock(mapMtx);
+    std::lock_guard<std::mutex> strLock(storeMtx);
     std::lock_guard<std::mutex> heapLock(heapMtx);
     clearStore();
     store.clear();
 };
 
 void LRUStore::EXPIRE(const std::string& _key, const size_t duration){
-    std::lock_guard<std::mutex> lock(mapMtx);
+    std::lock_guard<std::mutex> lock(storeMtx);
     const auto& isPresent  = store.find(_key);
     if(isPresent == store.end()){
         return;
     }
     Node* curr = isPresent->second;
-    addExpTime(curr, true, duration);
+    setExpiry(curr, true, duration);
 };
 
 
 std::optional<std::string> LRUStore::INCR(const std::string& _key){
-    std::lock_guard<std::mutex> strLock(mapMtx);
+    std::lock_guard<std::mutex> strLock(storeMtx);
     const auto& isPresent = store.find(_key);
 
     if(isPresent == store.end() || isExpired(isPresent->second)){
@@ -272,7 +301,7 @@ std::optional<std::string> LRUStore::INCR(const std::string& _key){
         if(isPresent != store.end()){
             deleteNode(isPresent->second);
         }
-        addNewNodeToStore(_key, "1", false);
+        insertNode(_key, "1", false);
         return "1";
     }
 

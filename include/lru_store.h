@@ -17,15 +17,15 @@
 #include <mutex>
 
 
-struct TTLNode {
+struct TTLEntry {
     std::string key;
     std::chrono::steady_clock::time_point expTime;
 
-    bool operator>(const TTLNode& other) const {
+    bool operator>(const TTLEntry& other) const {
         return expTime > other.expTime;
     }
 
-    TTLNode(const std::string& _key, const std::chrono::steady_clock::time_point& _expTime) : key(_key), expTime(_expTime) {}
+    TTLEntry(const std::string& _key, const std::chrono::steady_clock::time_point& _expTime) : key(_key), expTime(_expTime) {}
 };
 
 
@@ -65,11 +65,12 @@ class LRUStore {
     void deleteNode(Node* toDelete);
     void clearStore();
     bool isExpired(const Node* curr);
-    void addExpTime(Node* curr, const bool isExpires, const size_t duration = 0);
-    void addToTTLHeap(const std::string& key, std::chrono::steady_clock::time_point _expTime);
-    void removeExpKeys();
+    void setExpiry(Node* curr, const bool isExpires, const size_t duration = 0);
+    void scheduleTTL(const std::string& key, std::chrono::steady_clock::time_point _expTime);
+    void purgeExpiredKeys();
     bool isAllDigits(const std::string& value);
-    void addNewNodeToStore(const std::string& _key, const std::string& _val, const bool isExpire);
+    void insertNode(const std::string& _key, const std::string& _val, const bool isExpire);
+    void evictionLoop();
 
     std::unordered_map<std::string, Node*> store;
     Node* dummyHead;
@@ -79,42 +80,13 @@ class LRUStore {
     const size_t maxCapacity;
     const size_t ttl;
     const size_t evictInterval;
-    std::priority_queue<TTLNode, std::vector<TTLNode>, std::greater<TTLNode>> ttlHeap;
-    std::mutex mapMtx;
+    std::priority_queue<TTLEntry, std::vector<TTLEntry>, std::greater<TTLEntry>> ttlHeap;
+    std::mutex storeMtx;
     std::mutex heapMtx;
     std::mutex evictionMtx;
-    std::condition_variable cv;
+    std::condition_variable evictionCv;
     std::atomic<bool> stopEviction{false};
     std::thread evictionThread;
-
-    void evictionLoop(){
-        while(true){
-            std::unique_lock<std::mutex> lock(evictionMtx);
-            std::unique_lock<std::mutex> heapLock(heapMtx);
-            
-            /*
-                Smart wakeup: instead of sleeping a fixed evictInterval, sleep until the
-                nearest key's expiry time. If heap is empty, fall back to evictInterval.
-                When a new key with earlier expiry is added (via addToTTLHeap),
-                cv.notify_one() wakes this thread early to recalculate wakeup time.
-            */
-            std::chrono::time_point<std::chrono::steady_clock> nextEvictionTime = 
-                !ttlHeap.empty() 
-                ? ttlHeap.top().expTime 
-                : std::chrono::steady_clock::now() + std::chrono::seconds(evictInterval);
-            
-            // release heapMtx before sleeping — cv needs only evictionMtx
-            heapLock.unlock(); 
-
-            cv.wait_until(lock, nextEvictionTime, [this]{
-                return stopEviction.load();
-            });
-            if (stopEviction) {
-                break;
-            }
-            removeExpKeys();
-        }
-    };
 
     public:
 
@@ -146,12 +118,12 @@ class LRUStore {
             */
             
             stopEviction = true;
-            cv.notify_one();
+            evictionCv.notify_one();
             if(evictionThread.joinable()){
                 evictionThread.join();
             }
 
-            std::lock_guard<std::mutex> lock(mapMtx);
+            std::lock_guard<std::mutex> lock(storeMtx);
             std::lock_guard<std::mutex> heapLock(heapMtx);
             Node* curr = dummyHead;
             while(curr){
