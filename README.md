@@ -15,7 +15,7 @@ kv-store/
 ├── CMakeLists.txt
 ├── store.example.conf      # Example config — copy to store.conf and edit before running
 ├── include/
-│   ├── lru_store.h        # LRUStore, Node, TTLNode, LRUStoreConfig declarations
+│   ├── lru_store.h        # LRUStore, Node, TTLEntry, LRUStoreConfig declarations
 │   ├── tcp_server.h       # TCPServer — connection handling, thread pool, command routing
 │   └── resp_parser.h      # RESPParser, RESPCommand, ParseStatus, ResponseType
 └── src/
@@ -42,7 +42,7 @@ kv-store/
 
 ### TTL Expiry
 
-`std::priority_queue<TTLNode>` min-heap ordered by expiry time, with lazy deletion.
+`std::priority_queue<TTLEntry>` min-heap ordered by expiry time, with lazy deletion.
 
 - `Node::expTime` holds `optional<time_point>` — `nullopt` means the key never expires
 - Lazy expiry check on every GET/EXISTS/INCR before returning a value
@@ -53,9 +53,9 @@ kv-store/
 Active eviction runs on a background thread started in the constructor and stopped cleanly in the destructor.
 
 - Instead of sleeping a fixed interval, the thread checks the TTL heap top and sleeps until the nearest key's expiry time. Falls back to `evictInterval` seconds when the heap is empty
-- When a new key comes in with an earlier expiry than the current heap top, `cv.notify_one()` wakes the thread early to recalculate its next wakeup time
-- Uses `cv.wait_until()` instead of `sleep_for` — so the destructor can wake it immediately on shutdown rather than waiting out the full sleep
-- Two mutexes protect shared state: `mapMtx` for the store + DLL, `heapMtx` for the TTL heap. A third `evictionMtx` is used only with the condition variable — so the sleeping thread never blocks GET/SET operations
+- When a new key comes in with an earlier expiry than the current heap top, `evictionCv.notify_one()` wakes the thread early to recalculate its next wakeup time
+- Uses `evictionCv.wait_until()` instead of `sleep_for` — so the destructor can wake it immediately on shutdown rather than waiting out the full sleep
+- Two mutexes protect shared state: `storeMtx` for the store + DLL, `heapMtx` for the TTL heap. A third `evictionMtx` is used only with the condition variable — so the sleeping thread never blocks GET/SET operations
 
 ### TCP Server
 
@@ -64,7 +64,7 @@ Handles client connections over TCP on a configurable port.
 - Binds to `0.0.0.0:port` — accepts connections from any network interface
 - Thread pool of 10 worker threads pre-created at startup — bounded resource usage, no per-connection thread spawn overhead
 - `accept()` loop runs on a dedicated thread — pushes client fds into a shared queue
-- Worker threads block on `cv.wait()` — zero CPU when idle, exactly one worker wakes per new client via `notify_one()`
+- Worker threads block on `clientCv.wait()` — zero CPU when idle, exactly one worker wakes per new client via `notify_one()`
 - Persistent connections — one worker thread serves one client for the lifetime of the connection
 - `activeClients` atomic counter — 11th client gets `-ERR max clients reached\r\n` and is rejected
 - `SO_REUSEADDR` set — server restarts immediately without waiting for OS `TIME_WAIT` to expire
@@ -154,15 +154,15 @@ $-1\r\n          — null (GET miss)
 
 **`expTime` stored in `Node`** — lazy expiry on GET requires O(1) check per key. The heap only exposes its top, so expiry time must be on the node itself.
 
-**Lazy heap deletion** — `std::priority_queue` has no random access or in-place update. On TTL update, a new entry is pushed and the stale one is discarded during `removeExpKeys()`.
+**Lazy heap deletion** — `std::priority_queue` has no random access or in-place update. On TTL update, a new entry is pushed and the stale one is discarded during `purgeExpiredKeys()`.
 
 **`size_t` for capacity and TTL** — `store.size()` returns `size_t`. Mixing with `int` causes signed/unsigned comparison warnings and silent wraparound on negative values.
 
 **Minimum TTL of 60 seconds** — enforced as `max(store_default_ttl, user_input)`. Sub-minute TTLs cause unnecessary churn in a cache use case.
 
-**Two separate mutexes for store and heap** — `mapMtx` and `heapMtx` are kept separate so heap iteration during eviction doesn't block concurrent GET/SET on the store. A third `evictionMtx` is used only with the condition variable to avoid blocking GET/SET while the eviction thread is sleeping.
+**Two separate mutexes for store and heap** — `storeMtx` and `heapMtx` are kept separate so heap iteration during eviction doesn't block concurrent GET/SET on the store. A third `evictionMtx` is used only with the condition variable to avoid blocking GET/SET while the eviction thread is sleeping.
 
-**`removeExpKeys()` releases `heapMtx` before touching the store** — holding both locks simultaneously would create a circular wait with SET/EXPIRE (which acquire `mapMtx` then `heapMtx`). Releasing `heapMtx` first eliminates the deadlock.
+**`purgeExpiredKeys()` releases `heapMtx` before touching the store** — holding both locks simultaneously would create a circular wait with SET/EXPIRE (which acquire `storeMtx` then `heapMtx`). Releasing `heapMtx` first eliminates the deadlock.
 
 **Thread pool over one-thread-per-client** — bounded resource usage. One thread per client would allow unbounded thread creation — 1000 clients = 1000 threads = potential OOM. Pool of 10 caps memory usage and matches expected number of persistent app server connections.
 
@@ -202,7 +202,7 @@ cp ../store.example.conf ../store.conf
 - [x] EXPIRE command
 - [x] INCR command — with missing/expired key initialization
 - [x] Background eviction thread — smart wakeup via condition variable
-- [x] Thread safety — two mutex design (mapMtx + heapMtx)
+- [x] Thread safety — two mutex design (storeMtx + heapMtx)
 - [x] TCPServer — thread pool, accept loop, worker loop, O(1) command routing
 - [x] RESPParser — parse() + serialize() with full error messages
 - [x] Config file driven startup — `.conf` format, full validation

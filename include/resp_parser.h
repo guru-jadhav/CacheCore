@@ -30,7 +30,7 @@ enum class ResponseType {
     NULLBULK
 };
 
-const std::string terminal = "\r\n";
+const std::string CRLF = "\r\n";
 
 struct RESPCommand {
     int dbIndex;
@@ -51,219 +51,16 @@ struct RESPCommand {
 
 class RESPParser{
 
-    bool helper(std::string& rawRequest, size_t& startIndex, RESPCommand& parsedRequest, int requestNo){
-        if(startIndex >= rawRequest.size()){
-            parsedRequest.status = ParseStatus::INCOMPLETE;
-            return false;
-        }
-
-        if(rawRequest[startIndex] != '$'){
-            parsedRequest.status = ParseStatus::INVALID_FORMAT;
-            parsedRequest.errorMsg = ParseErr::EXPECTED_BULK;
-            return false;
-        }
-
-        std::string dataLenStr;
-        int index = startIndex + 1;
-
-        while(index < rawRequest.size() && rawRequest[index] != '\r'){
-            if(rawRequest[index] >= '0' && rawRequest[index] <= '9'){
-                dataLenStr += rawRequest[index];
-                index++;
-            }else{
-                parsedRequest.status = ParseStatus::INVALID_FORMAT;
-                parsedRequest.errorMsg = ParseErr::INVALID_BULK_LEN;
-                return false;
-            }
-        }
-
-        if(index == rawRequest.size()){
-            parsedRequest.status = ParseStatus::INCOMPLETE;
-            return false;
-        }
-
-        if(rawRequest[index + 1] != '\n'){
-            parsedRequest.status = ParseStatus::INVALID_FORMAT;
-            parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
-            return false;
-        }
-        
-        index += 2;;
-
-        
-        size_t dataLen = std::stoi(dataLenStr);
-        std::string data = rawRequest.substr(index, dataLen);
-        if(data.size() < dataLen){
-            parsedRequest.status = ParseStatus::INCOMPLETE;
-            parsedRequest.errorMsg = ParseErr::BULK_DATA_SHORT;
-            return false;
-        }
-        
-
-        index += dataLen;
-        
-        if(index + 1 >= rawRequest.size()){
-            parsedRequest.status = ParseStatus::INCOMPLETE;
-            return false;
-        }
-
-        if(rawRequest[index] != '\r'){
-            parsedRequest.status = ParseStatus::INVALID_FORMAT;
-            parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
-            return false;
-        }
-
-        index++;
-        if(rawRequest[index] != '\n'){
-            parsedRequest.status = ParseStatus::INVALID_FORMAT;
-            parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
-            return false;
-        }
-        
-        
-        index++;
-        startIndex = index;
-
-        if(requestNo == 0){
-            try {
-                
-                /*
-                    what if the DB index bulk string is not a number like 
-                    -> "abc" 
-                    -> "" or an empty string
-                */
-                parsedRequest.dbIndex = std::stoi((data));
-            } catch (...) {
-                parsedRequest.status =  ParseStatus::INVALID_FORMAT;
-                parsedRequest.errorMsg = ParseErr::INVALID_DB_INDEX;
-                return false;
-            }
-        }else if(requestNo == 1){
-            parsedRequest.command = data;
-        }else{
-            parsedRequest.args.emplace_back(data);
-        }
-        
-
-        return true;
-    }
-
-    std::string simpleStringResponse(){
-        return "+OK" + terminal;
-    }
-
-    std::string errorResponse(const std::string& rawResponse){
-        std::string formattedResponse = "-ERR ";
-        formattedResponse += rawResponse;
-        formattedResponse += terminal;
-        return formattedResponse;
-    }
-
-    std::string bulkResponse(const std::string& rawResponse) {
-        std::string formattedResponse ="$";
-        std::string noOfBytes = std::to_string(rawResponse.size());
-        formattedResponse += noOfBytes;
-        formattedResponse += terminal;
-        formattedResponse += rawResponse;
-        formattedResponse += terminal;
-        return formattedResponse;
-    }
-
-    std::string nullBulkResponse(){
-        return "$-1" + terminal;
-    }
-
-    std::string integerResponse(const std::string& rawResponse) {
-        std::string formattedResponse =":";
-        formattedResponse += rawResponse;
-        formattedResponse += terminal;
-        return formattedResponse;
-    }
+    bool parseBulkString(std::string& rawRequest, size_t& startIndex, RESPCommand& parsedRequest, int requestNo);
+    std::string serializeOK();
+    std::string serializeError(const std::string& rawResponse);
+    std::string serializeBulk(const std::string& rawResponse);
+    std::string serializeNullBulk();
+    std::string serializeInteger(const std::string& rawResponse);
 
     public:
-
-        RESPCommand parse(std::string& rawRequest){
-            
-            RESPCommand parsedRequest;
-            
-            if(rawRequest.size() <= 0){
-                parsedRequest.status = ParseStatus::INCOMPLETE;
-                parsedRequest.errorMsg = ParseErr::EMPTY_REQUEST;
-                return parsedRequest;
-            }
-            
-            if(rawRequest[0] != '*'){
-                parsedRequest.status = ParseStatus::INVALID_FORMAT;
-                parsedRequest.errorMsg = ParseErr::EXPECTED_ARRAY;
-                return parsedRequest;
-            }
-
-            
-            size_t pos = 1;
-            std::string noOfBulkStreams;
-            while(pos < rawRequest.size() && rawRequest[pos] != '\r'){
-                // only numbers allowed
-                if(rawRequest[pos] >= '0' && rawRequest[pos] <= '9'){
-                    noOfBulkStreams += rawRequest[pos];
-                    pos++;
-                }else{
-                    parsedRequest.status = ParseStatus::INVALID_FORMAT;
-                    parsedRequest.errorMsg = ParseErr::INVALID_ARRAY_COUNT;
-                    return parsedRequest;
-                }
-            }
-            
-            if(pos == rawRequest.size()){
-                parsedRequest.status = ParseStatus::INCOMPLETE;
-                return parsedRequest;
-            }
-            
-            
-            if(rawRequest[pos + 1] != '\n'){
-                parsedRequest.status = ParseStatus::INVALID_FORMAT;
-                parsedRequest.errorMsg = ParseErr::MISSING_CRLF;
-                return parsedRequest;
-            }
-            
-            pos += 2;
-            int N = std::stoi((noOfBulkStreams));
-
-            for(int i = 0; i < N; i++){
-                if(!helper(rawRequest, pos, parsedRequest, i)){
-                    return parsedRequest;
-                }
-            }
-            
-            return parsedRequest;
-        };
-
-        std::string serialize (ResponseType type, const std::string& rawResponse) {
-            
-            switch (type) {
-
-                case ResponseType::OK : {
-                    return simpleStringResponse();
-                }
-
-                case ResponseType::ERROR : {
-                    return errorResponse(rawResponse);
-                }
-
-                case ResponseType::BULK : {
-                    return bulkResponse(rawResponse);
-                }
-
-                case ResponseType::NULLBULK : {
-                    return nullBulkResponse();
-                }
-
-                case ResponseType::INTEGER : {
-                    return integerResponse(rawResponse);
-                };
-            }
-
-            return "unknown response type";
-        }
+        RESPCommand parse(std::string& rawRequest);
+        std::string serialize (ResponseType type, const std::string& rawResponse);
 };
 
 /*
