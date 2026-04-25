@@ -1,4 +1,7 @@
 #include "../include/tcp_server.h"
+#include "config.h"
+#include "lru_store.h"
+#include "resp_parser.h"
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
@@ -9,10 +12,13 @@ bool TCPServer::isInvalidDBIndex(const RESPCommand& cmd) {
     return (cmd.dbIndex < 0 || cmd.dbIndex >= stores.size());
 };
 
+/**
+ * @brief Initialize the $O(1) routing table on startup
+ */
 void TCPServer::initCommandRegistry() {
 
     commandRegistry["GET"] = {1, [this](const RESPCommand& cmd) {
-        auto result = stores[cmd.dbIndex].GET(cmd.args[0]);
+        auto result = stores[cmd.dbIndex]->GET(cmd.args[0]);
         if (!result) {
             return parser.serialize(ResponseType::NULLBULK, "");
         }
@@ -20,28 +26,28 @@ void TCPServer::initCommandRegistry() {
     }};
 
     commandRegistry["SET"] = {3, [this](const RESPCommand& cmd) {
-        bool result = stores[cmd.dbIndex].SET(cmd.args[0], cmd.args[1], cmd.args[2] == "1");
+        bool result = stores[cmd.dbIndex]->SET(cmd.args[0], cmd.args[1], cmd.args[2] == "1");
         return parser.serialize(ResponseType::INTEGER, result ? "1" : "0");
     }};
 
     commandRegistry["DEL"] = {1, [this](const RESPCommand& cmd) {
-        stores[cmd.dbIndex].DEL(cmd.args[0]);
+        stores[cmd.dbIndex]->DEL(cmd.args[0]);
         return parser.serialize(ResponseType::OK, "");
     }};
 
     commandRegistry["EXISTS"] = {1, [this](const RESPCommand& cmd) {
-        bool result = stores[cmd.dbIndex].EXISTS(cmd.args[0]);
+        bool result = stores[cmd.dbIndex]->EXISTS(cmd.args[0]);
         return parser.serialize(ResponseType::INTEGER, result ? "1" : "0");
     }};
 
     commandRegistry["CLEAR"] = {0, [this](const RESPCommand& cmd) {
-        stores[cmd.dbIndex].CLEAR();
+        stores[cmd.dbIndex]->CLEAR();
         return parser.serialize(ResponseType::OK, "");
     }};
 
     commandRegistry["EXPIRE"] = {2, [this](const RESPCommand& cmd) {
         try {
-            stores[cmd.dbIndex].EXPIRE(cmd.args[0], std::stoi(cmd.args[1]));
+            stores[cmd.dbIndex]->EXPIRE(cmd.args[0], std::stoi(cmd.args[1]));
             return parser.serialize(ResponseType::OK, "");
         } catch(...) {
             return parser.serialize(ResponseType::ERROR, "invalid TTL value");
@@ -50,7 +56,7 @@ void TCPServer::initCommandRegistry() {
 
     commandRegistry["INCR"] = {1, [this](const RESPCommand& cmd) {
 
-        auto result = stores[cmd.dbIndex].INCR(cmd.args[0]);
+        auto result = stores[cmd.dbIndex]->INCR(cmd.args[0]);
         if(!result){
             return parser.serialize(ResponseType::ERROR, "value is not an integer or out of range");
         }
@@ -249,8 +255,15 @@ bool TCPServer::stop() {
     return true;
 };
 
-TCPServer::TCPServer(std::vector<LRUStore>& _stores, int _port) : stores(_stores), port(_port) { 
-    initCommandRegistry(); // Initialize the $O(1) routing table on startup
+TCPServer::TCPServer(const Config& config) { 
+    
+    port = config.port;
+    stores.reserve(config.dbConfig.size());
+    for(const auto& dbCfg : config.dbConfig){
+        stores.emplace_back(std::make_unique<LRUStore>(dbCfg));
+    }
+
+    initCommandRegistry(); 
 };
 
 TCPServer::~TCPServer() {
