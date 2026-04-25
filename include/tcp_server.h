@@ -1,4 +1,5 @@
 #pragma once
+#include "config.h"
 #include "lru_store.h"
 #include "resp_parser.h"
 #include <functional>
@@ -20,7 +21,7 @@ class TCPServer {
 
     int serverFd;
     int port;
-    std::vector<LRUStore>& stores;
+    std::vector<std::unique_ptr<LRUStore>> stores; 
     std::vector<std::thread> workerThreads;
     std::thread acceptThread;
     std::queue<int> clientFds;
@@ -41,7 +42,7 @@ class TCPServer {
 
 public:
 
-    TCPServer(std::vector<LRUStore>& _stores, int _port);
+    TCPServer(const Config& config);
     ~TCPServer();
     bool start();
     bool stop();
