@@ -132,6 +132,11 @@ std::string RESPParser::serializeInteger(const std::string& rawResponse) {
     return formattedResponse;
 }
 
+std::string RESPParser::serializeSimpleString(const std::string& rawResponse) {
+    return "+" + rawResponse + CRLF;
+}
+
+
 RESPCommand RESPParser::parse(std::string& rawRequest){
     
     RESPCommand parsedRequest;
@@ -209,6 +214,10 @@ std::string RESPParser::serialize (ResponseType type, const std::string& rawResp
 
         case ResponseType::INTEGER : {
             return serializeInteger(rawResponse);
+        };
+
+        case ResponseType::SIMPLE_STRING :{
+            return serializeSimpleString(rawResponse);
         };
     }
 

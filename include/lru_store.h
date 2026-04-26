@@ -152,4 +152,6 @@ class LRUStore {
         void EXPIRE(const std::string& _key, const size_t duration);
 
         std::optional<std::string> INCR(const std::string& _key);
+
+        std::string PING();
 };

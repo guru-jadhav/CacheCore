@@ -335,3 +335,8 @@ std::optional<std::string> LRUStore::INCR(const std::string& _key){
 
     return strCounter;
 };
+
+std::string LRUStore::PING(){
+    std::string PONG = "PONG";
+    return PONG;
+}

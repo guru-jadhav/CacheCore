@@ -63,6 +63,11 @@ void TCPServer::initCommandRegistry() {
         return parser.serialize(ResponseType::INTEGER, *result);
     }};
     
+    commandRegistry["PING"] = {0, [this](const RESPCommand& cmd){
+        std::string result = stores[cmd.dbIndex]->PING();
+        return parser.serialize(ResponseType::SIMPLE_STRING, result);
+    }};
+
 };
 
 std::string TCPServer::handleCommand(const RESPCommand& cmd) {
