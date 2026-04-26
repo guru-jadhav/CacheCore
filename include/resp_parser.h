@@ -27,7 +27,8 @@ enum class ResponseType {
     ERROR,
     BULK,
     INTEGER,
-    NULLBULK
+    NULLBULK,
+    SIMPLE_STRING
 };
 
 const std::string CRLF = "\r\n";
@@ -57,6 +58,7 @@ class RESPParser{
     std::string serializeBulk(const std::string& rawResponse);
     std::string serializeNullBulk();
     std::string serializeInteger(const std::string& rawResponse);
+    std::string serializeSimpleString(const std::string& rawResponse);
 
     public:
         RESPCommand parse(std::string& rawRequest);
