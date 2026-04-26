@@ -154,13 +154,17 @@ Started in `LRUStore` constructor, stopped in destructor.
 
 ---
 
+### 3a. PING (Stateless Health Check)
+
+`LRUStore::PING()` returns `"PONG"` — no mutex, no store access. Used by clients and load balancers to verify the server process is alive and the command pipeline is functional.
+
 ### 4. Thread Safety
 
 **Three mutexes, each with a distinct purpose:**
 
 | Mutex | Protects | Used by |
 |---|---|---|
-| `storeMtx` | `store` map + DLL | GET, SET, DEL, EXISTS, CLEAR, EXPIRE, INCR, purgeExpiredKeys (phase 2) |
+| `storeMtx` | `store` map + DLL | GET, SET, DEL, EXISTS, CLEAR, EXPIRE, INCR, PING (no lock — stateless), purgeExpiredKeys (phase 2) |
 | `heapMtx` | `ttlHeap` | scheduleTTL, purgeExpiredKeys (phase 1), evictionLoop (wakeup calc), CLEAR |
 | `evictionMtx` | condition variable wait | evictionLoop only |
 
@@ -267,6 +271,7 @@ $len\r\ndata\r\n    ← bulk string 2+: args
 | `BULK` | `$<len>\r\n<data>\r\n` | GET hit |
 | `NULLBULK` | `$-1\r\n` | GET miss |
 | `INTEGER` | `:<value>\r\n` | SET, EXISTS, INCR |
+| `SIMPLE_STRING` | `+<msg>\r\n` | PING response (`+PONG\r\n`) |
 
 ---
 
@@ -281,6 +286,7 @@ $len\r\ndata\r\n    ← bulk string 2+: args
 | `EXPIRE` | `key seconds` | 2 | `void EXPIRE(key, stoi(seconds))` | `OK` / `ERROR` | `+OK\r\n` or `-ERR invalid TTL value\r\n` |
 | `INCR` | `key` | 1 | `optional<string> INCR(key)` | `INTEGER` / `ERROR` | `:<newValue>\r\n` or `-ERR value is not an integer or out of range\r\n` |
 | `CLEAR` | _(none)_ | 0 | `void CLEAR()` | `OK` | `+OK\r\n` |
+| `PING` | _(none)_ | 0 | `string PING()` | `SIMPLE_STRING` | `+PONG\r\n` |
 
 ### Command Behavior Details
 
@@ -314,6 +320,10 @@ $len\r\ndata\r\n    ← bulk string 2+: args
 
 **CLEAR:**
 - Acquires both `storeMtx` and `heapMtx`. Walks DLL deleting all nodes, relinks sentinels, drains heap, clears map.
+
+**PING:**
+- Stateless — returns `"PONG"` immediately. No mutex acquired, no store interaction.
+- Used as a health-check / liveness probe. Redis-compatible.
 
 ---
 
@@ -354,6 +364,10 @@ INCR "counter" on db 0:
 CLEAR db 0:
 *2\r\n$1\r\n0\r\n$5\r\nCLEAR\r\n
 → +OK\r\n
+
+PING on db 0:
+*2\r\n$1\r\n0\r\n$4\r\nPING\r\n
+→ +PONG\r\n
 ```
 
 ---
@@ -425,6 +439,7 @@ cp ../store.example.conf ../store.conf
 - [x] TTL expiry — min-heap with lazy deletion
 - [x] EXPIRE command
 - [x] INCR command — with missing/expired key initialization + overflow guard
+- [x] PING command — stateless health check, `SIMPLE_STRING` response type
 - [x] Background eviction thread — smart wakeup via condition variable
 - [x] Thread safety — three mutex design (storeMtx + heapMtx + evictionMtx)
 - [x] TCPServer — thread pool, accept loop, worker loop, O(1) command routing
