@@ -227,7 +227,7 @@ bool TCPServer::start(){
         workerThreads.emplace_back(std::thread(&TCPServer::workerLoop, this));
     }
 
-    std::cout<<"KV store server running on port : "<<port<<"\n";
+    std::cout<<"CacheCore server running on port : "<<port<<"\n";
 
     return true;
 };
@@ -255,7 +255,7 @@ bool TCPServer::stop() {
         }
     }
 
-    std::cout<<"\nKV store server stopped"<<"\n";
+    std::cout<<"\nCacheCore server stopped"<<"\n";
 
     return true;
 };

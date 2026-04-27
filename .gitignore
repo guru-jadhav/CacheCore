@@ -13,7 +13,7 @@ _deps/
 *.a
 *.so
 *.out
-kv-store
+CacheCore
 .vscode/
 .idea/
 *.swp

@@ -30,7 +30,7 @@ int main(int argc, char* argv[]) {
 
 
     std::string configPath = argv[1];
-    std::cout<<"Initializing KV-Store using : " << configPath << "\n";
+    std::cout<<"Initializing CacheCore using : " << configPath << "\n";
 
     auto config = ConfigParser::load(configPath);
     if(!config){
