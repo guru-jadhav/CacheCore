@@ -1,4 +1,4 @@
-# kv-store
+# CacheCore
 
 An in-memory key-value store built from scratch in C++17. Zero external dependencies.
 
@@ -11,7 +11,7 @@ Implements LRU eviction, TTL expiry with background cleanup, and a RESP-compatib
 ## Architecture
 
 ```
-kv-store/
+CacheCore/
 ├── CMakeLists.txt              # Build config — C++17, pthread, recursive src glob
 ├── store.example.conf          # Template config — copy to store.conf before running
 ├── include/
@@ -42,12 +42,12 @@ Server is started with a config file path:
 
 ```bash
 cp store.example.conf store.conf   # copy template, edit as needed
-./kv-store ./store.conf
+./CacheCore ./store.conf
 ```
 
 **Config file format (`.conf`):**
 ```properties
-# kv-store config
+# CacheCore config
 PORT=6948
 
 # format: DB maxCapacity=<N> ttl=<N> evictInterval=<N>
@@ -417,14 +417,14 @@ PING on db 0:
 ## Build
 
 ```bash
-git clone https://github.com/guru-jadhav/kv-store
-cd kv-store
+git clone https://github.com/guru-jadhav/CacheCore
+cd CacheCore
 mkdir build && cd build
 cmake ..
 cmake --build .
 cp ../store.example.conf ../store.conf
 # edit store.conf as needed
-./kv-store ../store.conf
+./CacheCore ../store.conf
 ```
 
 **Requirements:** GCC 13+ or Clang 18+, CMake 3.20+, Linux (POSIX sockets + pthreads)
