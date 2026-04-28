@@ -380,7 +380,7 @@ PING on db 0:
 | **`expTime` stored in `Node`, not just heap** | Lazy expiry on GET/EXISTS/INCR needs O(1) per-key check. Heap only exposes its top. |
 | **Lazy heap deletion** | `std::priority_queue` has no random-access delete or in-place update. On TTL change, push new entry; stale ones are discarded in `purgeExpiredKeys()` via expiry comparison. |
 | **`size_t` for capacity, TTL, evictInterval** | `store.size()` returns `size_t`. Mixing with `int` → signed/unsigned warnings and silent wraparound on negative values. |
-| **Minimum TTL = 60s, minimum evictInterval = 10s** | Enforced in constructor: `max(60, config.ttl)`, `max(10, config.evictInterval)`. Sub-minute TTLs cause unnecessary churn in a cache. |
+| **Minimum TTL = 60s, minimum evictInterval = 10s** | Enforced in constructor: `max(60, config.ttl)`, `max(10, config.evictInterval)`. Sub-second TTLs and aggressive eviction intervals cause unnecessary background thread wakeups and lock contention that degrade throughput, so we enforce sensible minimums at the store level. |
 | **Three separate mutexes** | `storeMtx` for store+DLL, `heapMtx` for TTL heap, `evictionMtx` for condition variable. Eviction thread sleeping never blocks GET/SET. |
 | **`purgeExpiredKeys()` releases heap lock before store lock** | Prevents circular wait. SET/EXPIRE acquire `storeMtx` → `heapMtx`. Purge acquires `heapMtx` → releases → `storeMtx`. No deadlock. |
 | **Thread pool (10 workers) over thread-per-client** | Bounded resource usage. 1000 clients ≠ 1000 threads. Pool of 10 matches expected persistent app server connections. |

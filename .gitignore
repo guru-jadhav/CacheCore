@@ -21,3 +21,4 @@ CacheCore
 .DS_Store
 .cache/
 store.conf
+/tests/.configs/
