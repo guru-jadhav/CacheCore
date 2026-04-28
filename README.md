@@ -433,6 +433,14 @@ cp ../store.example.conf ../store.conf
 
 ---
 
+## Testing
+
+CacheCore includes a fully automated Python testing suite that manages dynamic server configurations, verifies correctness, and performs extreme high-contention stress testing. 
+
+For full details and execution instructions, see the [tests/README.md](tests/README.md).
+
+---
+
 ## Roadmap
 
 - [x] LRU eviction — HashMap + DLL
@@ -446,5 +454,5 @@ cp ../store.example.conf ../store.conf
 - [x] RESPParser — parse() + serialize() with full error messages
 - [x] Config file driven startup — `.conf` format, full validation
 - [x] Move implementations to .cpp files
-- [ ] End-to-end test with Python RESP client
+- [x] End-to-end test with Python RESP client (Automated multi-DB and deadlock stress testing)
 - [ ] Integration with P2 — URL Shortener
