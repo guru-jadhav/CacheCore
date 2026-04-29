@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/CacheCore.png" alt="CacheCore Logo" width="500">
+  <img src="assets/CacheCore_full.png" alt="CacheCore Logo" width="300">
 </p>
 
 # CacheCore
