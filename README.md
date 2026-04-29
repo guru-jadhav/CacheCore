@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/CacheCore.png" alt="CacheCore Logo" width="500">
+</p>
+
 # CacheCore
 
 An in-memory key-value store built from scratch in C++17. Zero external dependencies.
