@@ -84,6 +84,10 @@ Client usually sends array of bulk streams:
 
     For V1 - we will not support pipelining like redis does
 
+    Note: This is a custom RESP implementation. Unlike standard Redis, CacheCore 
+    requires the Database Index to be passed as the first argument on every call 
+    to enable stateless routing.
+
     1 single request will be something like : 
 
     no. of bulk string, db index, command, key, value, flags, etc.
