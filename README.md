@@ -2,9 +2,9 @@
 
 An in-memory key-value store built from scratch in C++17. Zero external dependencies.
 
-Implements LRU eviction, TTL expiry with background cleanup, and a RESP-compatible wire protocol — designed as a Redis replacement for a URL Shortener backend.
+Implements LRU eviction, TTL expiry with background cleanup, and a custom RESP-encoded wire protocol optimized for stateless multi-DB routing.
 
-**Stack:** C++17 · CMake 3.20 · Clang 18 / GCC 13 · pthreads · WSL (Ubuntu 24.04)
+**Stack:** C++17 · CMake 3.20 · Clang 18 / GCC 13 · pthreads · Linux
 
 ---
 
@@ -225,6 +225,9 @@ Started in `LRUStore` constructor, stopped in destructor.
 
 ### 6. RESP Protocol Parser (`resp_parser.h` · `resp_parser.cpp`)
 
+> [!NOTE]
+> **Custom Protocol Schema:** While CacheCore uses standard RESP (REdis Serialization Protocol) syntax, it employs a custom stateless command structure. Unlike Redis (which uses stateful connections via `SELECT`), CacheCore requires every command array to pass the target Database Index as its first argument to enable stateless, O(1) multi-DB routing. Standard Redis clients (like `redis-cli`) will not work out-of-the-box.
+
 **Request format:** RESP array of bulk strings.
 
 ```
@@ -323,7 +326,7 @@ $len\r\ndata\r\n    ← bulk string 2+: args
 
 **PING:**
 - Stateless — returns `"PONG"` immediately. No mutex acquired, no store interaction.
-- Used as a health-check / liveness probe. Redis-compatible.
+- Used as a health-check / liveness probe.
 
 ---
 
@@ -455,4 +458,4 @@ For full details and execution instructions, see the [tests/README.md](tests/REA
 - [x] Config file driven startup — `.conf` format, full validation
 - [x] Move implementations to .cpp files
 - [x] End-to-end test with Python RESP client (Automated multi-DB and deadlock stress testing)
-- [ ] Integration with P2 — URL Shortener
+- [ ] Development of a client library ecosystem
