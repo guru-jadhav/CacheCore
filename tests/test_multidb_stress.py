@@ -439,12 +439,12 @@ def connect_phase(tid):
 def worker(tid, sock):
     for _ in range(OPS_PER_THREAD):
         cmd, arr = build_cmd()
-        start = time.time()
+        start = time.perf_counter()
 
         try:
             sock.sendall(to_resp(arr))
             resp = recv_full(sock)
-            latency = (time.time() - start) * 1000
+            latency = (time.perf_counter() - start) * 1000
 
             t = classify(resp)
 
@@ -530,7 +530,7 @@ def run():
     print("PHASE 2: STRESS TEST")
     print("="*80)
 
-    start = time.time()
+    start = time.perf_counter()
 
     workers = []
     for tid, sock in accepted_clients:
@@ -541,7 +541,7 @@ def run():
     for t in workers:
         t.join()
 
-    duration = time.time() - start
+    duration = time.perf_counter() - start
     total_ops = len(accepted_clients)*OPS_PER_THREAD
 
     print("\nRESULTS")

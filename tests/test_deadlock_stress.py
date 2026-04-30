@@ -478,10 +478,10 @@ def extreme_worker(tid, client):
         db = cmd_payload[1]
         actual_payload = cmd_payload[2:]
         
-        start = time.time()
+        start = time.perf_counter()
 
         act_type, act_msg = client.execute_strictly(db, cmd_name, *actual_payload[1:])
-        latency = (time.time() - start) * 1000
+        latency = (time.perf_counter() - start) * 1000
 
         if act_type == "[DISCONNECTED]":
             metrics.record_drop()
