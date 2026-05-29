@@ -194,7 +194,7 @@ void TCPServer::workerLoop() {
 
 bool TCPServer::start(){
 
-    serverFd = socket(AF_INET, SOCK_STREAM, 0);
+    serverFd = socket(AF_INET6, SOCK_STREAM, 0);
 
     // return false if server socket creation fails -> socket() will return -1;
     if(serverFd < 0){
@@ -204,12 +204,14 @@ bool TCPServer::start(){
     // This tells the OS — "let me reuse this address even if it's in TIME_WAIT". 
     // So when you restart your server, it binds immediately without waiting 60 seconds.
     int opt = 1;
+    int no = 0;
     setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(serverFd, IPPROTO_IPV6, IPV6_V6ONLY, &no, sizeof(no));
 
-    sockaddr_in address;
-    address.sin_family = AF_INET;
-    address.sin_port = htons(port);
-    address.sin_addr.s_addr = INADDR_ANY;
+    sockaddr_in6 address{};
+    address.sin6_family = AF_INET6;
+    address.sin6_port   = htons(port);
+    address.sin6_addr   = in6addr_any;  // accepts both IPv4 and IPv6
     
     // try to bind the socket
     if(bind(serverFd, (struct sockaddr*)&address, sizeof(address)) < 0){
