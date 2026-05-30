@@ -38,7 +38,7 @@ class TCPServer {
     void handleClient(int fd);
     void acceptLoop();
     void workerLoop();
-
+    bool safeSend(int fd, const std::string& data);
 
 public:
 
