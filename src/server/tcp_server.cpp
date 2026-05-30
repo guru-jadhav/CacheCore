@@ -8,6 +8,17 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+// helper lambda — loops until all bytes are sent
+auto safeSend = [](int fd, const std::string& data) {
+    size_t totalSent = 0;
+    while (totalSent < data.size()) {
+        ssize_t bytesSent = send(fd, data.c_str() + totalSent, data.size() - totalSent, 0);
+        if (bytesSent <= 0) return false;
+        totalSent += bytesSent;
+    }
+    return true;
+};
+
 bool TCPServer::isInvalidDBIndex(const RESPCommand& cmd) {
     return (cmd.dbIndex < 0 || cmd.dbIndex >= stores.size());
 };
@@ -125,7 +136,7 @@ void TCPServer::handleClient(int fd){
         
         if (parsedCmd.status == ParseStatus::OK) {
             std::string response = handleCommand(parsedCmd);
-            send(fd, response.c_str(), response.size(), 0);
+            safeSend(fd, response);
             accumulated = "";
             continue;
         }
@@ -136,7 +147,7 @@ void TCPServer::handleClient(int fd){
         }
         
         std::string errResponse = parser.serialize(ResponseType::ERROR, parsedCmd.errorMsg);
-        send(fd, errResponse.c_str(), errResponse.size(), 0);
+        safeSend(fd, errResponse);
         accumulated = "";
     }
 }
@@ -158,7 +169,7 @@ void TCPServer::acceptLoop() {
         
         if(activeClients >= 10){
             std::string err = "-ERR max clients reached\r\n";
-            send(clientFd, err.c_str(), err.size(), 0);
+            safeSend(clientFd, err);
             close(clientFd);
             continue;
         }
