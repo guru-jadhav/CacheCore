@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 // helper lambda — loops until all bytes are sent
-auto safeSend = [](int fd, const std::string& data) {
+bool TCPServer::safeSend (int fd, const std::string& data) {
     size_t totalSent = 0;
     while (totalSent < data.size()) {
         ssize_t bytesSent = send(fd, data.c_str() + totalSent, data.size() - totalSent, 0);
