@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
 
     if(argc < 2){
         std::cerr<<"Error: Missing configuration file.\n";
-        std::cerr<<"Usage: "<<argv[0]<<" <path_to_config.json>\n";
+        std::cerr<<"Usage: "<<argv[0]<<" <path_to_config.conf>\n";
         return EXIT_FAILURE;
     }
 
