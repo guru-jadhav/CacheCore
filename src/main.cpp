@@ -21,6 +21,7 @@ void printConfig(const Config& config) {
 }
 
 int main(int argc, char* argv[]) {
+    std::cout << std::unitbuf;
 
     if(argc < 2){
         std::cerr<<"Error: Missing configuration file.\n";

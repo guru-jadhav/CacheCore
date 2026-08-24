@@ -463,3 +463,56 @@ For full details and execution instructions, see the [tests/README.md](tests/REA
 - [x] Move implementations to .cpp files
 - [x] End-to-end test with Python RESP client (Automated multi-DB and deadlock stress testing)
 - [ ] Development of a client library ecosystem
+
+---
+
+## Docker Integration
+
+CacheCore is fully containerized and can be run using Docker.
+
+### Public Docker Image
+The official image is hosted on Docker Hub:
+`gurujadhav471/cachecore:latest`
+
+### Building the Image Locally
+If you make changes to the C++ code, you can rebuild the image locally from the project root:
+```bash
+docker build -t cachecore:latest .
+```
+
+### Running the Container
+Start the container in detached mode with port `6948` exposed. 
+> [!IMPORTANT]
+> The `-t` (TTY) flag is highly recommended to enable C++ stdout line-buffering so you can see logs in real-time.
+
+```bash
+docker run -d -t -p 6948:6948 --name cachecore gurujadhav471/cachecore:latest
+```
+
+### Passing a Custom Configuration (Volume Mounting)
+You can override the default `store.conf` configuration at runtime by mounting your custom configuration file:
+
+```bash
+docker run -d -t -p 6948:6948 \
+  -v /path/to/your-custom-store.conf:/app/store.conf \
+  --name cachecore gurujadhav471/cachecore:latest
+```
+
+Alternatively, you can mount a directory and pass a custom configuration path directly as a command argument:
+
+```bash
+docker run -d -t -p 6948:6948 \
+  -v /path/to/configs:/configs \
+  --name cachecore gurujadhav471/cachecore:latest /configs/custom.conf
+```
+
+### Monitoring and Logs
+To view connection events, disconnections, and command execution logs in real-time:
+```bash
+docker logs -f cachecore
+```
+
+To monitor CacheCore's memory and CPU usage:
+```bash
+docker stats cachecore
+```
