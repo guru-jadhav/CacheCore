@@ -119,6 +119,7 @@ void TCPServer::handleClient(int fd){
         if(bytesRead == 0){
             activeClients--;
             close(fd);
+            std::cout << "[INFO] Client disconnected, socket FD: " << fd << std::endl;
             return;
         }
 
@@ -135,6 +136,11 @@ void TCPServer::handleClient(int fd){
         RESPCommand parsedCmd = parser.parse(accumulated);
         
         if (parsedCmd.status == ParseStatus::OK) {
+            std::cout << "[INFO] [" << parsedCmd.dbIndex << "] Executed command: " << parsedCmd.command;
+            if (!parsedCmd.args.empty()) {
+                std::cout << " on key: " << parsedCmd.args[0];
+            }
+            std::cout << std::endl;
             std::string response = handleCommand(parsedCmd);
             safeSend(fd, response);
             accumulated = "";
@@ -166,6 +172,8 @@ void TCPServer::acceptLoop() {
             std::cerr << "accept() failed: " << strerror(errno) << "\n";
             continue;
         }
+        
+        std::cout << "[INFO] Accepted new connection, socket FD: " << clientFd << std::endl;
         
         if(activeClients >= 10){
             std::string err = "-ERR max clients reached\r\n";
