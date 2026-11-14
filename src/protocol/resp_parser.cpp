@@ -77,13 +77,8 @@ bool RESPParser::parseBulkString(std::string& rawRequest, size_t& startIndex, RE
 
     if(requestNo == 0){
         try {
-            
-            /*
-                what if the DB index bulk string is not a number like 
-                -> "abc" 
-                -> "" or an empty string
-            */
-            parsedRequest.dbIndex = std::stoi((data));
+            // Validate that DB index is a valid numeric string
+            parsedRequest.dbIndex = std::stoi(data);
         } catch (...) {
             parsedRequest.status =  ParseStatus::INVALID_FORMAT;
             parsedRequest.errorMsg = ParseErr::INVALID_DB_INDEX;

@@ -8,7 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-// helper lambda — loops until all bytes are sent
+// Helper method — loops until all bytes are sent
 bool TCPServer::safeSend (int fd, const std::string& data) {
     size_t totalSent = 0;
     while (totalSent < data.size()) {
@@ -110,12 +110,12 @@ void TCPServer::handleClient(int fd){
     char buffer[4096];
     std::string accumulated;
 
-    // as we have 1:1 connections for client and we never close the connectiosn we keep waiting for client
+    // Maintain persistent 1:1 client connection loop
     while(true){
 
         int bytesRead = recv(fd, buffer, sizeof(buffer) - 1 , 0);
 
-        // recv() == 0 -> it means connection closed by client
+        // Connection closed by client
         if(bytesRead == 0){
             activeClients--;
             close(fd);
@@ -147,7 +147,7 @@ void TCPServer::handleClient(int fd){
             continue;
         }
         
-        // if the cmd is still to be revived from the network
+        // Incomplete frame; wait for more data from the socket
         if (parsedCmd.status == ParseStatus::INCOMPLETE) {
             continue;
         }
@@ -214,14 +214,11 @@ void TCPServer::workerLoop() {
 bool TCPServer::start(){
 
     serverFd = socket(AF_INET6, SOCK_STREAM, 0);
-
-    // return false if server socket creation fails -> socket() will return -1;
     if(serverFd < 0){
         return false;
     }
     
-    // This tells the OS — "let me reuse this address even if it's in TIME_WAIT". 
-    // So when you restart your server, it binds immediately without waiting 60 seconds.
+    // Enable SO_REUSEADDR to allow immediate rebinding without waiting for TIME_WAIT expiration
     int opt = 1;
     int no = 0;
     setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -232,7 +229,6 @@ bool TCPServer::start(){
     address.sin6_port   = htons(port);
     address.sin6_addr   = in6addr_any;  // accepts both IPv4 and IPv6
     
-    // try to bind the socket
     if(bind(serverFd, (struct sockaddr*)&address, sizeof(address)) < 0){
         std::cerr<<"bind() failed: "<<strerror(errno)<<"\n";
         close(serverFd);
@@ -242,7 +238,7 @@ bool TCPServer::start(){
     listen(serverFd, SOMAXCONN);
     acceptThread = std::thread(&TCPServer::acceptLoop, this);
 
-    // create 10 worker thread -> 10 persistent connections
+    // Pre-spawn 10 worker threads for persistent client connections
     workerThreads.reserve(10);
         for(int i = 0; i < 10; i++){
         workerThreads.emplace_back(std::thread(&TCPServer::workerLoop, this));

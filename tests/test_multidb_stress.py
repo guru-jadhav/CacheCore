@@ -49,7 +49,7 @@ RESET = "\033[0m"
 # =========================================================
 def generate_config(conf_path):
     port = random.randint(10000, 60000)
-    # GPT tests multi-db isolation on DB 0, 1, and 2, so we need at least 3 DBs
+    # Multi-DB isolation tests across DB 0, 1, and 2 require at least 3 DBs
     num_dbs = random.randint(3, 6) 
     
     config_content = f"PORT={port}\n"

@@ -1,8 +1,4 @@
 #pragma once
-// #pragma once tells the compiler — "no matter how many times you encounter this file, only process it once."
-// #pragma once must be the absolute first line of the file. If another file includes this header before the guard 
-// is registered, double inclusion can still happen. Move it to line 1.
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -39,10 +35,6 @@ struct Node {
     Node(const std::string& _key, const std::string& _value) : key(_key), value(_value), prev(nullptr), next(nullptr) {}
 };
 
-/*
-    using initializer struct as params can grow more and more and maintaing them 
-    can become a chaos
-*/ 
 struct LRUStoreConfig {
     size_t maxCapacity   = 100;
     size_t ttl           = 60;
@@ -75,8 +67,6 @@ class LRUStore {
     std::unordered_map<std::string, Node*> store;
     Node* dummyHead;
     Node* dummyTail;
-    // store.size() returns size_t which is unsigned. maxCapacity is int which is signed. 
-    // This will trigger a compiler warning and can behave unexpectedly if maxCapacity is somehow negative.
     const size_t maxCapacity;
     const size_t ttl;
     const size_t evictInterval;
@@ -90,12 +80,10 @@ class LRUStore {
 
     public:
 
-        //  ttl(std::max(ttl, _ttl) this is wrong we are reading ttl even before it's initialized it
-        //  ttl(std::max((size_t)60, _ttl))
         LRUStore(const LRUStoreConfig& config) 
             : maxCapacity(config.maxCapacity)
-            , ttl(std::max((size_t)60, config.ttl))
-            , evictInterval(std::max((size_t)10, config.evictInterval))
+            , ttl(config.ttl)
+            , evictInterval(config.evictInterval)
         {
             dummyHead = new Node("-1", "-1");
             dummyTail = new Node("-1", "-1");
@@ -107,16 +95,7 @@ class LRUStore {
         }
 
         ~LRUStore(){
-
-            /*
-                Shutdown sequence — order matters:
-                1. Set flag first so thread sees it when woken
-                2. notify_one() wakes thread immediately instead of waiting up to evictInterval
-                3. join() blocks until thread fully exits — prevents crash on scope exit
-                   (if std::thread is destroyed while still joinable -> std::terminate() -> crash)
-                   Memory cleanup happens AFTER join() — thread must stop before we free anything
-            */
-            
+            // Signal eviction worker to stop and wait for termination before releasing resources
             stopEviction = true;
             evictionCv.notify_one();
             if(evictionThread.joinable()){
@@ -139,10 +118,8 @@ class LRUStore {
         
         std::optional<std::string> GET(const std::string& _key);
 
-        // will send this default flag from cliet
         bool SET(const std::string& _key, const std::string& _value, const bool isExpires);
 
-        // we can make the DEL as void -> if exists we delete it we just return
         void DEL(const std::string& _key);
 
         bool EXISTS(const std::string& _key);

@@ -33,12 +33,11 @@ WORKDIR /app
 # Copy the compiled binary from the builder stage
 COPY --from=builder /app/build/CacheCore ./
 
-# Copy the default configuration file
-COPY store.conf ./
+# Copy the example configuration file for reference
+COPY store.example.conf ./store.example.conf
 
 # Expose CacheCore's port (6948)
 EXPOSE 6948
 
-# Run CacheCore, defaulting to store.conf but allowing dynamic configuration file overrides at runtime
+# Run CacheCore — requires configuration file path via CLI argument
 ENTRYPOINT ["./CacheCore"]
-CMD ["store.conf"]
