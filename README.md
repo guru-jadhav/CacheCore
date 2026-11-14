@@ -107,12 +107,12 @@ DB maxCapacity=300 ttl=60 evictInterval=80
 
 **`TTLEntry` fields:** `key`, `steady_clock::time_point expTime`. Has `operator>` for min-heap ordering.
 
-**Constructor enforced minimums:**
+**Constructor configuration:**
 
-| Parameter | Minimum | Code |
+| Parameter | Description | Code |
 |---|---|---|
-| `ttl` | 60 seconds | `std::max((size_t)60, config.ttl)` |
-| `evictInterval` | 10 seconds | `std::max((size_t)10, config.evictInterval)` |
+| `ttl` | Default TTL in seconds | `config.ttl` |
+| `evictInterval` | Eviction fallback interval in seconds | `config.evictInterval` |
 
 **Internal methods:**
 
@@ -123,7 +123,7 @@ DB maxCapacity=300 ttl=60 evictInterval=80
 | `moveToHead(Node*)` | Removes then links to head (skip if already head) |
 | `deleteNode(Node*)` | Removes from DLL + erases from map + `delete` |
 | `insertNode(key, val, isExpires)` | Evicts LRU if at capacity, creates new node, links to head, sets expiry |
-| `setExpiry(Node*, isExpires, duration)` | If expiring: computes `now + max(ttl, duration)`, sets on node, schedules in heap. If not: sets `nullopt` (clears any existing TTL). |
+| `setExpiry(Node*, isExpires, duration)` | If expiring: computes `now + (duration > 0 ? duration : ttl)`, sets on node, schedules in heap. If not: sets `nullopt` (clears any existing TTL). |
 | `scheduleTTL(key, expTime)` | Pushes to heap. If new expiry is earlier than heap top → `notify_one()` to wake eviction thread. |
 | `isExpired(Node*)` | Returns `expTime.has_value() && expTime <= now` |
 | `isAllDigits(string)` | Checks if string is all digits, **allows leading `-` for negative numbers** |
@@ -143,6 +143,9 @@ Started in `LRUStore` constructor, stopped in destructor.
 3. Unlock `heapMtx` (so GET/SET can push to heap while thread sleeps).
 4. `evictionCv.wait_until(lock, nextEvictionTime, []{return stopEviction;})` — sleeps until wakeup time or notification.
 5. If `stopEviction` → break. Otherwise → call `purgeExpiredKeys()`.
+
+**Why Smart Wakeup over Fixed-Interval Polling?**
+Fixed-interval polling either burns CPU cycles in a busy-wait when no keys are expiring, or delays key expiration by up to the polling interval. Smart wakeup sleeps precisely until the earliest expiration timestamp in the min-heap (`wait_until(heap.top().expTime)`), ensuring 0% idle CPU overhead and zero key eviction lag. If a writer schedules a key with an even earlier expiration via `scheduleTTL()`, `evictionCv.notify_one()` wakes the eviction thread immediately to recalculate its sleep target.
 
 **`purgeExpiredKeys` — two-phase delete to avoid deadlock:**
 1. **Phase 1:** Lock `heapMtx`. Pop all entries where `expTime <= now` into a `vector<string>`. Unlock `heapMtx`.
@@ -300,7 +303,7 @@ $len\r\ndata\r\n    ← bulk string 2+: args
 **SET:**
 - If key exists → update value, move to head, update expiry.
 - If key doesn't exist → evict LRU if at capacity, insert new node at head.
-- `isExpires` is the 3rd arg: `"1"` → apply TTL (`max(store_ttl, 0)`), `"0"` → no expiry (`nullopt`).
+- `isExpires` is the 3rd arg: `"1"` → apply TTL (`duration` if specified > 0, else store's default `ttl`), `"0"` → no expiry (`nullopt`).
 - If key previously had a TTL and is re-SET with `isExpires=0`, the TTL is **cleared** (`nullopt`).
 - Returns `false` only if `maxCapacity == 0`.
 
@@ -316,7 +319,7 @@ $len\r\ndata\r\n    ← bulk string 2+: args
 
 **EXPIRE:**
 - If key doesn't exist → silently returns (still sends `+OK`).
-- Effective TTL = `max(store_default_ttl, user_seconds)`. The store's `ttl` is already clamped to `max(60, config_ttl)`.
+- Effective TTL = `user_seconds` if `user_seconds > 0`, else store's default `ttl`.
 - `seconds` arg is parsed via `std::stoi` in `tcp_server.cpp` — non-numeric → caught, returns `-ERR invalid TTL value`.
 
 **INCR:**
@@ -387,7 +390,7 @@ PING on db 0:
 | **`expTime` stored in `Node`, not just heap** | Lazy expiry on GET/EXISTS/INCR needs O(1) per-key check. Heap only exposes its top. |
 | **Lazy heap deletion** | `std::priority_queue` has no random-access delete or in-place update. On TTL change, push new entry; stale ones are discarded in `purgeExpiredKeys()` via expiry comparison. |
 | **`size_t` for capacity, TTL, evictInterval** | `store.size()` returns `size_t`. Mixing with `int` → signed/unsigned warnings and silent wraparound on negative values. |
-| **Minimum TTL = 60s, minimum evictInterval = 10s** | Enforced in constructor: `max(60, config.ttl)`, `max(10, config.evictInterval)`. Sub-second TTLs and aggressive eviction intervals cause unnecessary background thread wakeups and lock contention that degrade throughput, so we enforce sensible minimums at the store level. |
+| **Unclamped, Configurable TTL & Eviction Interval** | TTL and eviction fallback intervals are fully configurable without artificial clamping, allowing precise low-latency expiration (e.g., short-lived tokens or cache leases) while defaulting to store-level configuration when omitted. |
 | **Three separate mutexes** | `storeMtx` for store+DLL, `heapMtx` for TTL heap, `evictionMtx` for condition variable. Eviction thread sleeping never blocks GET/SET. |
 | **`purgeExpiredKeys()` releases heap lock before store lock** | Prevents circular wait. SET/EXPIRE acquire `storeMtx` → `heapMtx`. Purge acquires `heapMtx` → releases → `storeMtx`. No deadlock. |
 | **Thread pool (10 workers) over thread-per-client** | Bounded resource usage. 1000 clients ≠ 1000 threads. Pool of 10 matches expected persistent app server connections. |
@@ -448,58 +451,38 @@ For full details and execution instructions, see the [tests/README.md](tests/REA
 
 ---
 
-## Roadmap
-
-- [x] LRU eviction — HashMap + DLL
-- [x] TTL expiry — min-heap with lazy deletion
-- [x] EXPIRE command
-- [x] INCR command — with missing/expired key initialization + overflow guard
-- [x] PING command — stateless health check, `SIMPLE_STRING` response type
-- [x] Background eviction thread — smart wakeup via condition variable
-- [x] Thread safety — three mutex design (storeMtx + heapMtx + evictionMtx)
-- [x] TCPServer — thread pool, accept loop, worker loop, O(1) command routing
-- [x] RESPParser — parse() + serialize() with full error messages
-- [x] Config file driven startup — `.conf` format, full validation
-- [x] Move implementations to .cpp files
-- [x] End-to-end test with Python RESP client (Automated multi-DB and deadlock stress testing)
-- [ ] Development of a client library ecosystem
-
----
-
 ## Docker Integration
 
-CacheCore is fully containerized and can be run using Docker.
+CacheCore is fully containerized and distributed as a lean, multi-stage Docker image.
 
 ### Public Docker Image
 The official image is hosted on Docker Hub:
 `gurujadhav471/cachecore:latest`
 
 ### Building the Image Locally
-If you make changes to the C++ code, you can rebuild the image locally from the project root:
+To build the container image locally from the project root:
 ```bash
 docker build -t cachecore:latest .
 ```
 
 ### Running the Container
-Start the container in detached mode with port `6948` exposed. 
+
+CacheCore requires an explicit configuration file to start. To run the container, mount your configuration file into `/app/` and pass the path as a container argument:
+
 > [!IMPORTANT]
-> The `-t` (TTY) flag is highly recommended to enable C++ stdout line-buffering so you can see logs in real-time.
+> The `-t` (TTY) flag is recommended to enable C++ stdout line-buffering so server logs appear in real-time.
 
 ```bash
-docker run -d -t -p 6948:6948 --name cachecore gurujadhav471/cachecore:latest
-```
+# 1. Create a local configuration from the provided template (if not already created)
+cp store.example.conf store.conf
 
-### Passing a Custom Configuration (Volume Mounting)
-You can override the default `store.conf` configuration at runtime by mounting your custom configuration file:
-
-```bash
+# 2. Run CacheCore with your configuration file mounted
 docker run -d -t -p 6948:6948 \
-  -v /path/to/your-custom-store.conf:/app/store.conf \
-  --name cachecore gurujadhav471/cachecore:latest
+  -v $(pwd)/store.conf:/app/store.conf \
+  --name cachecore gurujadhav471/cachecore:latest /app/store.conf
 ```
 
-Alternatively, you can mount a directory and pass a custom configuration path directly as a command argument:
-
+Alternatively, you can mount an entire directory of configurations:
 ```bash
 docker run -d -t -p 6948:6948 \
   -v /path/to/configs:/configs \
@@ -507,12 +490,12 @@ docker run -d -t -p 6948:6948 \
 ```
 
 ### Monitoring and Logs
-To view connection events, disconnections, and command execution logs in real-time:
+To view connection events, disconnections, and command logs in real-time:
 ```bash
 docker logs -f cachecore
 ```
 
-To monitor CacheCore's memory and CPU usage:
+To monitor memory footprint and CPU utilization:
 ```bash
 docker stats cachecore
 ```

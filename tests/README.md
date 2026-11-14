@@ -4,7 +4,7 @@ This folder holds the automated test scripts I use to verify that CacheCore work
 
 ## Requirements
 - Python 3
-- Make sure you've built the project first (the scripts expect to find the compiled `kv-store` binary in the `../build/` directory).
+- Make sure you've built the project first (the scripts expect to find the compiled `CacheCore` binary in the `../build/` directory).
 
 ## The Scripts
 

@@ -1,6 +1,4 @@
-// #include <string>        // angle brackets — for system/standard library headers
-// #include "../../include/lru_store.h"
-#include "lru_store.h"      // quotes — for your own project headers
+#include "lru_store.h"
 #include <chrono>
 #include <climits>
 #include <cstddef>
@@ -160,7 +158,8 @@ void LRUStore::scheduleTTL(const std::string& _key, std::chrono::steady_clock::t
 
 void LRUStore::setExpiry(Node* curr, const bool isExpires, const size_t duration){
     if(isExpires){
-        auto computedExpTime = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(ttl, duration));
+        size_t expiryDuration = (duration > 0) ? duration : ttl;
+        auto computedExpTime = std::chrono::steady_clock::now() + std::chrono::seconds(expiryDuration);
         curr->expTime = computedExpTime;
         scheduleTTL(curr->key, computedExpTime);
     }else{
@@ -198,7 +197,6 @@ void LRUStore::purgeExpiredKeys(){
             DEL() deletes unconditionally — we only want to delete if still expired.
         */
 
-        // DEL(key);
         std::lock_guard<std::mutex> storeLock(storeMtx);
         const auto& isPresent  = store.find(key);
         if(isPresent != store.end() && isPresent->second->expTime != std::nullopt && isPresent->second->expTime <= std::chrono::steady_clock::now()){
@@ -316,14 +314,11 @@ std::optional<std::string> LRUStore::INCR(const std::string& _key){
     try {
         newValue = std::stoll(oldValueStr);
     } catch (...) {
-        // if we have LLONG_MAX + 1 value then it throws std::out_of_range
-        // even though we never increment beyound LLONG_MAX, but what if user
-        // sets very long out-of-bound value and tried to incremt it, then boom
+        // Handle values exceeding 64-bit integer limits
         return std::nullopt;
     }
     
-    // but what if we do ++ and this moves out newValue out-of-bond ?
-    // we need a check here -> overflow check before increment
+    // Guard against integer overflow before incrementing
     if(newValue == LLONG_MAX){
         return std::nullopt;
     }

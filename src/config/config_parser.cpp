@@ -24,10 +24,7 @@ bool ConfigParser::invalidFileFormat(const std::string& configPath) {
 }
 
 bool ConfigParser::checkAllDigits(const std::string& line, int startIndex){
-    //std::cout<<line.size()<<" "<<startIndex<<"\n";
-    //std::cout<<"start checking digit\n";
     for(int i = startIndex; i < line.size(); i++){
-        //std::cout<<line[i]<<" ";
         if(line[i] < '0' || line[i] > '9'){
             return false;
         }
@@ -36,21 +33,15 @@ bool ConfigParser::checkAllDigits(const std::string& line, int startIndex){
 }
 
 bool ConfigParser::parsePort(const std::string& line, int startIndex, Config& config){
-    //std::cout<<"in parsePort\n";
     std::string prefix = line.substr(startIndex, 5);
-    //std::cout<<prefix<<"\n";
     if(prefix != PORT_PREFIX){
         return false;
     }
 
-    //std::cout<<"before checkAllDigits\n";
     if(!checkAllDigits(line, 5)){
-        // if we find invalid port - 123abd or xyz
-        // this will also handle -ve port numbers
-        //std::cout<<"inside if \n";
+        // Reject invalid or negative port numbers
         return false;
     }
-    //std::cout<<"after checkAllDigits\n";
 
     std::string portNoStr = line.substr(5);
     uint16_t _port;
@@ -170,7 +161,6 @@ int ConfigParser::parseEvictInterval(const std::string& line, int startIndex, LR
 }
 
 bool ConfigParser::parseDBConfig(const std::string& line, int startIndex, Config& config){
-    //std::cout<<"in parseDBConfig\n";
     std::string prefix = line.substr(startIndex, 2);
 
     if(prefix != DB_PREFIX){
@@ -228,13 +218,6 @@ bool ConfigParser::helper(const std::string& line, Config& config){
         return true;
     }
 
-    // if(line[i] != 'P' || line[i] != 'D'){
-    //     // some invalid char/corrupted config here
-    //     return false;
-    // }
-
-    // //std::cout<<i<<":"<<line<<"\n";
-
     if(line[i] == 'P'){
         // call helper for extracting PORT number
         // if we find multiple "PORT=" then we wil override the previous port
@@ -272,23 +255,16 @@ std::optional<Config> ConfigParser::load(const std::string& configPath){
 
     Config config;
     std::string line;
-    //std::cout<<"file open\n";
     while(std::getline(configFile, line)){
         if(line.empty() || line[0] == '#'){
-            // //std::cout<<"empty line\n";
             continue;
         }
-        // //std::cout<<line<<"\n";
-        // parse 1 - port, 2 - DB
 
         if(!helper(line, config)){
             // some invalid property may have occured while parsing, we need to error out;
             return std::nullopt;
         }
     }
-
-    // not need of .close() - destructor handles it (RAII)
-    // configFile.close();
 
     if (configFile.bad()) {
         std::cerr << fileParsingMessage::ERROR_WHILE_IO;

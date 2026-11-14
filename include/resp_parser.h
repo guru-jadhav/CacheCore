@@ -64,39 +64,3 @@ class RESPParser{
         RESPCommand parse(std::string& rawRequest);
         std::string serialize (ResponseType type, const std::string& rawResponse);
 };
-
-/*
-
-They are mostly used in responses, not requests:
-    1 - +OK\r\n → success
-    2 - :1\r\n → integer (like count)
-    3 - -ERR ... → error
-
-
-Client usually sends array of bulk streams:
-
-    1 - *no of bulk streams
-    2 - $no of chars in the bulk bulk stream
-
-    *2\r\n$3\r\nGET\r\n$3\r\nkey\r\n
-    *2\r\n$3\r\nGET\r\n$3\r\nabc\r\n
-    *2\r\n$3\r\nGET\r\n$3\r\nID1\r\n
-
-    For V1 - we will not support pipelining like redis does
-
-    Note: This is a custom RESP implementation. Unlike standard Redis, CacheCore 
-    requires the Database Index to be passed as the first argument on every call 
-    to enable stateless routing.
-
-    1 single request will be something like : 
-
-    no. of bulk string, db index, command, key, value, flags, etc.
-
-    ResponseType = 
-        +OK\r\n          — simple string (SET, DEL, EXPIRE success)
-        -ERR msg\r\n     — error
-        $3\r\nfoo\r\n    — bulk string (GET value)
-        $-1\r\n          — null bulk string (GET miss)
-        :1\r\n           — integer (EXISTS)
-
-*/
